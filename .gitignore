@@ -1,0 +1,13 @@
+# 运行状态、数据和测评记录
+/.deploy/
+/output/
+/runs/
+/records/
+/trajectories/
+/tmp/
+node_modules/
+*.sqlite
+*.sqlite-*
+*.db
+*.wasm
+*.log

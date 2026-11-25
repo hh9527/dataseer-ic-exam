@@ -1,0 +1,13 @@
+{
+  "name": "dataseer-ic-exam",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "test": "node --test tests/exam-cli.test.mjs tests/icloud-availability.test.mjs tests/kpi-waveforms.test.mjs tests/utc-milliseconds.test.mjs",
+    "test:data": "node tests/contract-inputs.test.mjs && node tests/icloud-data.test.mjs && node tests/utc-milliseconds-data.test.mjs"
+  }
+}
