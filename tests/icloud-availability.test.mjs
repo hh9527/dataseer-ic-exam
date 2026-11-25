@@ -4,12 +4,12 @@ import { createAvailability } from '../data/ic/icloud-availability.mjs';
 const hour = 3600000, day = 24 * hour;
 const start = Date.parse('2026-09-24T11:28:22Z'), end = start + 60 * day;
 const availability = createAvailability(20260926);
-const resource = {id: 'I_EntNetworkElement-0001', classification: 'ne.category.switch'};
+const resource = {id: 'EntNetworkElement-0001', classification: 'ne.category.switch'};
 const events = availability.events(resource, start, end);
 assert.ok(events.length > 0);
 assert.deepEqual(events, createAvailability(20260926).events(resource, start, end));
 assert.notDeepEqual(events, createAvailability(20260927).events(resource, start, end));
-assert.notDeepEqual(events, availability.events({...resource,id:'I_EntNetworkElement-0002'}, start, end));
+assert.notDeepEqual(events, availability.events({...resource,id:'EntNetworkElement-0002'}, start, end));
 assert.notDeepEqual(events, availability.events({...resource,classification:'ne.category.printer'}, start, end));
 assert.ok(new Set(events.map(e => e.end-e.start)).size > 3, 'Repair durations vary between events');
 assert.ok(events.some(e => e.start % hour !== 0), 'Outages are independent of hour boundaries');
@@ -34,7 +34,7 @@ assert.deepEqual(availability.events(resource, start+day,end-day),events.filter(
 // values must have real event-derived diversity; 0/100 remain valid boundaries.
 const means=[],partialValues=new Set(),classMeans=new Map();
 for (let i=0;i<150;i++) {
-  const r={id:`I_EntNetworkElement-${String(i+1).padStart(4,'0')}`,classification:`class-${i%10}`};
+  const r={id:`EntNetworkElement-${String(i+1).padStart(4,'0')}`,classification:`class-${i%10}`};
   const samples=Array.from({length:1440},(_,j)=>availability.rate(r,start+j*hour,hour));
   assert.ok(samples.every(v=>v>=0&&v<=100));
   means.push(samples.reduce((a,b)=>a+b,0)/samples.length);

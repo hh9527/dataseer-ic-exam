@@ -2,7 +2,7 @@
 // waveforms remain seeded; this profile supplies named assets and edge cases.
 const day=86400000;
 export function prepareExamAssets(rows,{anchorMs,availability}) {
- const network=rows.get('I_EntNetworkElement'),sites=rows.get('X_SITE_VIEW');
+ const network=rows.get('EntNetworkElement'),sites=rows.get('X_SITE_VIEW');
  if(network.length<120)throw Error('The complete exam profile requires at least 120 base resources');
  const hq=sites.find(s=>s.SITE_NAME==='江州总部');
  const company=hq.TENANT_ID,protectedRows=new Set();
@@ -53,7 +53,7 @@ export function prepareExamAssets(rows,{anchorMs,availability}) {
  Object.assign(distributed[0],{usedCapacity:0,unUsedCapacity:distributed[0].totalCapacity,usedCapacityRate:0});
  protectedRows.add(distributed[0]);place(distributed[0],hq,storage);
  rows.get('FCSwitchDevice')[0].ipAddress='';
- const pon=rows.get('I_EntPonElement'),olts=pon.filter(r=>r.classification==='ne.category.olt'),onus=pon.filter(r=>r.classification==='ne.category.pon.onu');
+ const pon=rows.get('EntPonElement'),olts=pon.filter(r=>r.classification==='ne.category.olt'),onus=pon.filter(r=>r.classification==='ne.category.pon.onu');
  olts.forEach((r,i)=>Object.assign(r,{manufacturer:'华为',productName:i<12?'MA5800':'MA5600',commuState:i<8?'1':r.commuState}));
  onus.forEach((r,i)=>Object.assign(r,{manufacturer:'华为',productName:i<24?'HG8245H':'HG8145V5',commuState:i<8?'0':r.commuState}));
  Object.assign(olts[0],{tenantId:company,projectId:hq.SITE_ID,refParentSubnet:hq.SITE_ID});
@@ -61,10 +61,10 @@ export function prepareExamAssets(rows,{anchorMs,availability}) {
  return {core,access,ipSwitch,controller,ap,servers,flash,distributed,olts,onus,hq,anchorMs};
 }
 export function finishExamAssets(rows,s){
- const slots=rows.get('I_EnterpriseSlot');
+ const slots=rows.get('EnterpriseSlot');
  Object.assign(slots[0],{refParentNE:s.core.id,tenantId:s.core.tenantId,projectId:s.core.projectId,
   hardVersion:'CEM48S4QP01 VER C',softVersion:'V200R022C00SPC100',operstatus:3});
- const frames=rows.get('I_EnterpriseFrame');
+ const frames=rows.get('EnterpriseFrame');
  Object.assign(frames[0],{refParentNE:s.core.id,tenantId:s.core.tenantId,projectId:s.core.projectId});
  slots[0].frameNativeId=frames[0].frameDn;
  const psus=rows.get('PhysicalServerPSU');
@@ -78,7 +78,7 @@ export function finishExamAssets(rows,s){
   Object.assign(r,{aNeResId:a.id,zNeResId:z.id,aNeName:a.name,zNeName:z.name,
    aNeIp:a.ipAddress,zNeIp:z.ipAddress,tenantId:a.tenantId,projectId:a.projectId,linkStatus:status});
   for(const [prefix,owner] of [['a',a],['z',z]]){
-   const p=rows.get('I_EnterpriseNetworkLTP').find(p=>p.refParentNE===owner.id);
+   const p=rows.get('EnterpriseNetworkLTP').find(p=>p.refParentNE===owner.id);
    Object.assign(r,{[prefix+'PortName']:p.name,[prefix+'PortAlias']:p.alias,[prefix+'PortDn']:p.id,[prefix+'PortIp']:p.ipAddress});
   }
  };
@@ -87,9 +87,9 @@ export function finishExamAssets(rows,s){
 }
 export function appendExamAlarms(alarms,rows,s,alarmProfile){
  const add=(family,owner,name,time,{severity=2,acked=1,cleared=0,eventtype}={})=>{
-  const template=alarms.find(a=>a.MECATEGORY===({I_EntNetworkElement:'NetworkElement',PhysicalServer:'PhysicalServer',HuaweiStorageDevice:'HuaweiStorageDevice',I_EntPonElement:'EntPonElement'}[family]));
+  const template=alarms.find(a=>a.MECATEGORY===({EntNetworkElement:'NetworkElement',PhysicalServer:'PhysicalServer',HuaweiStorageDevice:'HuaweiStorageDevice',EntPonElement:'EntPonElement'}[family]));
   if(!template)throw Error('Missing alarm scenario family '+family);
-  const row={...template,...alarmProfile(family,owner,rows.get('I_EnterpriseNetworkLTP'))};delete row.ports;
+  const row={...template,...alarmProfile(family,owner,rows.get('EnterpriseNetworkLTP'))};delete row.ports;
   Object.assign(row,{CSN:alarms.length+1,ALARMNAME:name,SEVERITY:severity,ACKED:acked,CLEARED:cleared,MOI:'',
    OCCURUTC:time,OCCURTIME:time,LATESTOCCURUTC:time,LATESTOCCURTIME:time,ARRIVEUTC:time+1000,
    ACKUTC:acked?time+1000:0,CLEARUTC:cleared?time+2000:0,CLEARTIME:cleared?time+2000:0,ENDUTC:cleared?time+2000:0,COMMENTUTC:acked?time+1000:0});
@@ -98,17 +98,17 @@ export function appendExamAlarms(alarms,rows,s,alarmProfile){
   if(eventtype!==undefined)row.EVENTTYPE=eventtype;
   alarms.push(row);
  };
- for(let i=0;i<25;i++)add('I_EntNetworkElement',s.access,'SNMP 采集超时',s.anchorMs-(i+1)*3600000,{acked:0,severity:i%4+1});
+ for(let i=0;i<25;i++)add('EntNetworkElement',s.access,'SNMP 采集超时',s.anchorMs-(i+1)*3600000,{acked:0,severity:i%4+1});
  const october=Date.parse('2026-10-13T12:30:00Z');
  if(october>=s.startMs&&october<s.anchorMs){
-  add('I_EntNetworkElement',s.core,'Route Change',october,{severity:1});
-  add('I_EntNetworkElement',s.core,'对象删除',october+3600000,{severity:3,eventtype:13});
+  add('EntNetworkElement',s.core,'Route Change',october,{severity:1});
+  add('EntNetworkElement',s.core,'对象删除',october+3600000,{severity:3,eventtype:13});
  }
- add('I_EntNetworkElement',s.core,'对象删除',s.anchorMs-day,{severity:3,eventtype:13});
+ add('EntNetworkElement',s.core,'对象删除',s.anchorMs-day,{severity:3,eventtype:13});
  add('PhysicalServer',s.servers[0],'OS用户SSH免密指纹文件内容格式错误告警',s.anchorMs-2*day);
  add('PhysicalServer',s.servers[1],'服务器管理接口不可达',s.anchorMs-day,{severity:2});
  add('HuaweiStorageDevice',s.flash[0],'存储缓存使用率过高',s.anchorMs-day,{severity:3});
- add('I_EntPonElement',s.olts[0],'OLT 管理通道异常',s.anchorMs-day,{severity:1});
+ add('EntPonElement',s.olts[0],'OLT 管理通道异常',s.anchorMs-day,{severity:1});
 }
 export function examMetric(s,table,column,ownerId,time,value){
  if(table==='ServerDeviceKPI'&&time<s.startMs){

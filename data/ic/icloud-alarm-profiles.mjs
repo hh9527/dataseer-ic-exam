@@ -1,9 +1,9 @@
 // Source catalog names the first four broad families. FC/collaboration broad
 // names and network secondary names below are demo conventions, not source enums.
 export const alarmFamilies = {
-  I_EntNetworkElement: 'NetworkElement', PhysicalServer: 'PhysicalServer',
-  HuaweiStorageDevice: 'HuaweiStorageDevice', I_EntPonElement: 'EntPonElement',
-  FCSwitchDevice: 'FCSwitchDevice', I_EntCollaborationElement: 'CollaborationElement',
+  EntNetworkElement: 'NetworkElement', PhysicalServer: 'PhysicalServer',
+  HuaweiStorageDevice: 'HuaweiStorageDevice', EntPonElement: 'EntPonElement',
+  FCSwitchDevice: 'FCSwitchDevice', EntCollaborationElement: 'CollaborationElement',
 };
 const networkTypes = {
   Lsw:'Switch', Wac:'WirelessController', Router:'Router', Firewall:'Firewall', Ap:'AccessPoint',
@@ -14,7 +14,7 @@ const networkTypes = {
   ups: 'UPS', lb: 'LoadBalancer', others: 'Other',
 };
 export function alarmProfile(family, owner, ports) {
-  const type = family === 'I_EntNetworkElement' ? networkTypes[owner.typeId] : owner.classification;
+  const type = family === 'EntNetworkElement' ? networkTypes[owner.typeId] : owner.classification;
   if (!type) throw new Error(`Missing alarm secondary class: ${family}/${owner.id}`);
   return { MEDN: owner.id, MENAME: owner.name, TENANTID: owner.tenantId,
     STREXT13: owner.projectId, MANUFACTURER: owner.manufacturer ?? '',

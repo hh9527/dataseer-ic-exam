@@ -14,13 +14,15 @@ node data/ic/generate.mjs \
 
 `--contract` 使用 `icloud-generation-contract/v1`，包含准备模型与源目录摘要；`--catalog` 给出物理表和字段。摘要不匹配时拒绝生成。模型仓库负责导出和更新这两个 JSON，生成器不访问其源码、Telora 编译器或 WASM。
 
+七张 IC 资源表在模型契约和源目录中使用无前缀的物理表名，分别为 `EntCollaborationElement`、`EntNetworkElement`、`EntPonElement`、`EnterpriseFrame`、`EnterpriseNetworkLTP`、`EnterpriseOpticalModule` 和 `EnterpriseSlot`。SQLite 数据库、生成清单和逐题覆盖 SQL 均使用这些表名。
+
 API 可使用 `generate({contract, catalog, output, seed, resources, tenants, days, intervalMinutes, anchor, examProfile})`。`loadModel(contract, catalog)` 读取并验证输入。测试也可通过 `IC_GENERATION_CONTRACT` 与 `IC_SOURCE_CATALOG` 显式提供输入，路径均由调用方指定。
 
 ## 规模与确定性
 
 普通场景默认种子 20260926，每表 12 个基准资源、32 天小时样本；锚点默认当前 UTC 分钟。完整考卷使用 150 个资源、30 个租户、93 天小时采样和 `--exam-profile`，题库默认取本仓 `questions/`，也可用 `--exam-questions DIR` 指定。
 
-种子、锚点、契约、源目录与生成规则相同，可复现同一数据库。输出目录必须不存在；在相邻临时目录生成和校验，再原子重命名发布，失败则清理临时目录。生成版本为 15，记录在 manifest。
+种子、锚点、契约、源目录与生成规则相同，可复现同一数据库。生成器使用物理表名构造资源 ID，并将表名作为设备分类抽样的输入。输出目录必须不存在；在相邻临时目录生成和校验，再原子重命名发布，失败则清理临时目录。生成版本为 16，记录在 manifest。
 
 - `--resources N` 设置基准资源总体，至少 6；全卷场景至少 120，推荐 150
 - `--tenants N` 独立设置租户数，3 至 resources；按约 20%／30%／50% 租户承载约 60%／30%／10% 资源，前 30 个租户使用企业、学校、医院等名称

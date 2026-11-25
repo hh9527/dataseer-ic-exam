@@ -14,7 +14,7 @@ try {
   assert.match(report.results.find(q=>q.id==='A2-004').task,/30MB/);
   for(const [question,sql]of [
     ['A1-001',"UPDATE HuaweiStorageDevice SET version='nonmatching' WHERE subClassName='EnterpriseStorage'"],
-    ['B3-004',"UPDATE I_EntNetworkElement SET sn='different' WHERE sn='121516516546'"],
+    ['B3-004',"UPDATE EntNetworkElement SET sn='different' WHERE sn='121516516546'"],
     ['B3-002',"DELETE FROM ServerDeviceKPI WHERE ts<'2026-01-01'"],
     ['C1-052',"UPDATE EnterprisePhysicalLink SET linkStatus=0 WHERE (aNeName='Core-SW-01' AND zNeName='Acc-SW-01') OR (zNeName='Core-SW-01' AND aNeName='Acc-SW-01')"],
     ['C1-013',"UPDATE NetworkDeviceKPI SET memUsage=30 WHERE ts>='2026-10-14T00:00:00.000Z' AND ts<'2026-10-14T17:25:00.000Z'"],

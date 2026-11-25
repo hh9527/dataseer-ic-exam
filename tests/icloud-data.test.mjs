@@ -54,23 +54,23 @@ try {
   const companySites=db.prepare(`SELECT s.SITE_NAME FROM X_SITE_VIEW s JOIN X_TENANT_VIEW t ON s.TENANT_ID=t.TENANT_ID
     WHERE t.TENANT_NAME=? AND s.SITE_NAME='江州总部'`).all(named.tenant.name);
   assert.equal(companySites.length,1);
-  const routerSites=db.prepare(`SELECT s.SITE_NAME,count(DISTINCT d.id) n FROM I_EntNetworkElement d JOIN X_SITE_VIEW s ON d.projectId=s.SITE_ID
+  const routerSites=db.prepare(`SELECT s.SITE_NAME,count(DISTINCT d.id) n FROM EntNetworkElement d JOIN X_SITE_VIEW s ON d.projectId=s.SITE_ID
     WHERE s.SITE_NAME LIKE '江州智造园区%' AND d.classification IN ('ne.category.router','AR') GROUP BY s.SITE_NAME`).all();
   assert.equal(routerSites.length,2,'Prefix grouping must contain two router populations');
-  assert(db.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a JOIN I_EntNetworkElement d ON a.MEDN=d.id
+  assert(db.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a JOIN EntNetworkElement d ON a.MEDN=d.id
     JOIN X_SITE_VIEW s ON s.SITE_ID=d.projectId WHERE s.SITE_NAME='江州智造园区' AND d.classification IN ('ne.category.switch','LSW')`).get().n>0);
-  const hightech=db.prepare(`SELECT sum(d.ipAddress LIKE '10.%') matching,sum(d.ipAddress NOT LIKE '10.%') contrast FROM I_EntNetworkElement d
+  const hightech=db.prepare(`SELECT sum(d.ipAddress LIKE '10.%') matching,sum(d.ipAddress NOT LIKE '10.%') contrast FROM EntNetworkElement d
     JOIN X_SITE_VIEW s ON d.projectId=s.SITE_ID WHERE s.SITE_NAME='江州高新园区'`).get();
   assert(hightech.matching>0 && hightech.contrast>0,'The subnet filter must distinguish devices within the named site');
-  assert(db.prepare(`SELECT count(*) n FROM I_EntNetworkElement d JOIN X_SITE_VIEW s ON d.projectId=s.SITE_ID
+  assert(db.prepare(`SELECT count(*) n FROM EntNetworkElement d JOIN X_SITE_VIEW s ON d.projectId=s.SITE_ID
     WHERE s.SITE_NAME!='江州高新园区' AND d.ipAddress LIKE '10.%'`).get().n>0,'The site filter must distinguish devices in the same subnet');
-  assert(db.prepare(`SELECT count(*) n FROM NetworkDeviceKPI k JOIN I_EntNetworkElement d ON k.resId=d.id
+  assert(db.prepare(`SELECT count(*) n FROM NetworkDeviceKPI k JOIN EntNetworkElement d ON k.resId=d.id
     JOIN X_SITE_VIEW s ON d.projectId=s.SITE_ID WHERE s.SITE_NAME='江州高新园区' AND d.ipAddress LIKE '10.%'`).get().n>1);
   const ping=db.prepare('SELECT min(nePingRespTime) lo,max(nePingRespTime) hi,count(DISTINCT nePingRespTime) n FROM NetworkDeviceKPI').get();
   assert(ping.lo>0 && ping.hi>ping.lo+30 && ping.n>10,'Ping samples vary across resources and time');
   const apMemory=db.prepare('SELECT min(hwApMemoryUseRate) lo,max(hwApMemoryUseRate) hi FROM NetworkAPKPI').get();
   assert(apMemory.lo>=0 && apMemory.hi<=100 && apMemory.hi-apMemory.lo>5);
-  assert.equal(db.prepare(`SELECT count(*) n FROM I_EnterpriseOpticalModule m LEFT JOIN X_TENANT_VIEW t ON m.tenantId=t.TENANT_ID WHERE m.id IS NULL OR t.TENANT_ID IS NULL`).get().n,0);
+  assert.equal(db.prepare(`SELECT count(*) n FROM EnterpriseOpticalModule m LEFT JOIN X_TENANT_VIEW t ON m.tenantId=t.TENANT_ID WHERE m.id IS NULL OR t.TENANT_ID IS NULL`).get().n,0);
   assert.equal(db.prepare(`SELECT count(*) n FROM StorageHardDriveKPI k LEFT JOIN SYS_StorageDisk d ON k.resId=d.id WHERE d.id IS NULL`).get().n,0);
   const frequency=db.prepare('SELECT sum(frequency=-1) sentinel,sum(frequency IS NULL) missing,sum(frequency>0) valid FROM PhysicalServerProcessor').get();
   assert(frequency.sentinel>0 && frequency.missing>0 && frequency.valid>0);
@@ -82,18 +82,18 @@ try {
       assert(validate(db,model,first.tables).invalidMetricScenarios.some(item=>item.table===table));
     } finally {db.exec('ROLLBACK TO invalid_new_metric; RELEASE invalid_new_metric');}
   }
-  const apCount = db.prepare("SELECT count(*) n FROM I_EntNetworkElement WHERE classification IN ('ne.category.fatap','AP')").get().n;
+  const apCount = db.prepare("SELECT count(*) n FROM EntNetworkElement WHERE classification IN ('ne.category.fatap','AP')").get().n;
   for (const [table, perAp] of [['NetworkAPKPI', 1], ['NetworkApRadioKPI', 2], ['NetworkApRadioSsidKPI', 3]]) {
     assert.equal(db.prepare(`SELECT count(DISTINCT resId) n FROM ${table}`).get().n, apCount * perAp);
   }
-  const oltCount = db.prepare("SELECT count(*) n FROM I_EntPonElement WHERE classification='ne.category.olt'").get().n;
+  const oltCount = db.prepare("SELECT count(*) n FROM EntPonElement WHERE classification='ne.category.olt'").get().n;
   assert.equal(db.prepare('SELECT count(DISTINCT resId) n FROM PonDevicePonPortKPI').get().n, oltCount * 4);
   // The validator must reject wrong roles and ownership, not merely produce a good fixture.
   for (const [table, mutation] of [
-    ['NetworkApRadioSsidKPI', "parentId=(SELECT id FROM I_EntNetworkElement WHERE classification NOT IN ('ne.category.fatap','AP') LIMIT 1)"],
+    ['NetworkApRadioSsidKPI', "parentId=(SELECT id FROM EntNetworkElement WHERE classification NOT IN ('ne.category.fatap','AP') LIMIT 1)"],
     ['NetworkApRadioKPI', "tenantId='unrelated-tenant'"],
-    ['NetworkAPKPI', "resId=(SELECT id FROM I_EntNetworkElement WHERE classification NOT IN ('ne.category.fatap','AP') LIMIT 1)"],
-    ['PonDevicePonPortKPI', "parentId=(SELECT id FROM I_EntPonElement WHERE classification='ne.category.pon.spl' LIMIT 1)"],
+    ['NetworkAPKPI', "resId=(SELECT id FROM EntNetworkElement WHERE classification NOT IN ('ne.category.fatap','AP') LIMIT 1)"],
+    ['PonDevicePonPortKPI', "parentId=(SELECT id FROM EntPonElement WHERE classification='ne.category.pon.spl' LIMIT 1)"],
     ['HuaweiStorageDevice', "classification='HuaweiStorage',deviceType='fcswitch'"],
     ['FCSwitchDevice', "classification='FcSwitch',subClassName='EnterpriseStorage'"],
   ]) {
@@ -127,7 +127,7 @@ try {
   assert.ok(db.prepare("SELECT count(*) n FROM T_CURRENT_ALARM WHERE ALARMNAME='CPU 利用率过高'").get().n > 0);
   assert.equal(db.prepare("SELECT count(*) n FROM T_CURRENT_ALARM WHERE METYPE LIKE 'METYPE-%' OR MOI LIKE 'MOI-%'").get().n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a WHERE a.MOI!=''
-    AND NOT EXISTS (SELECT 1 FROM I_EnterpriseNetworkLTP p WHERE p.refParentNE=a.MEDN AND a.MOI='Port ID='||p.portIndex)`).get().n, 0);
+    AND NOT EXISTS (SELECT 1 FROM EnterpriseNetworkLTP p WHERE p.refParentNE=a.MEDN AND a.MOI='Port ID='||p.portIndex)`).get().n, 0);
   assert.equal(db.prepare("SELECT count(*) n FROM T_CURRENT_ALARM WHERE (METYPE IN ('Printer','UPS') OR MECATEGORY='CollaborationElement') AND ALARMNAME IN ('CPU 利用率过高','内存使用率过高')").get().n, 0);
   db.exec('SAVEPOINT invalid_alarm_profile');
   try {
@@ -139,14 +139,14 @@ try {
   const classes = model.dimensions.find(d=>d.dataset==='device'&&d.id==='device_class').values;
   const {networkDeviceCategory} = await import('../data/ic/icloud-category-profiles.mjs');
   for (const member of classes) for (const wire of member.wires) assert.equal(networkDeviceCategory(Object.values(wire)[0],classes).id,member.id);
-  const devices = db.prepare('SELECT id,name,alias,manufacturer,productName,typeId,classification FROM I_EntNetworkElement').all();
+  const devices = db.prepare('SELECT id,name,alias,manufacturer,productName,typeId,classification FROM EntNetworkElement').all();
   const availability = createAvailability(options.seed);
   for (const row of db.prepare(`SELECT k.resId,k.ts,k.onlineRate,d.classification
-    FROM NetworkDeviceKPI k JOIN I_EntNetworkElement d ON d.id=k.resId`).all()) {
+    FROM NetworkDeviceKPI k JOIN EntNetworkElement d ON d.id=k.resId`).all()) {
     const expected = availability.rate({id:row.resId,classification:row.classification},Date.parse(row.ts),options.intervalMinutes*60000);
     assert.equal(row.onlineRate,Number(expected.toFixed(3)), 'KPI uses actual timestamp and physical device events');
   }
-  for (const row of db.prepare('SELECT id,classification,commuState FROM I_EntNetworkElement').all()) {
+  for (const row of db.prepare('SELECT id,classification,commuState FROM EntNetworkElement').all()) {
     assert.equal(row.commuState,availability.rate(row,Date.parse(options.anchor)-1,1)===0?'1':'0', 'Current state shares KPI outage events');
   }
 
@@ -157,14 +157,18 @@ try {
     assert.equal(device.typeId,cls.id);
     assert.ok(device.productName.startsWith(device.manufacturer+'-'+cls.label+'-'));
   }
-  for (const table of ['NetworkDeviceKPI','NetworkDeviceOnlineKPI']) assert.equal(db.prepare(`SELECT count(*) n FROM "${table}" k JOIN I_EntNetworkElement d ON k.resId=d.id WHERE k.deviceName!=d.name OR k.classification!=d.classification`).get().n,0);
-  assert.equal(db.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a JOIN I_EntNetworkElement d ON a.MEDN=d.id
+  for (const table of ['NetworkDeviceKPI','NetworkDeviceOnlineKPI']) assert.equal(db.prepare(`SELECT count(*) n FROM "${table}" k JOIN EntNetworkElement d ON k.resId=d.id WHERE k.deviceName!=d.name OR k.classification!=d.classification`).get().n,0);
+  assert.equal(db.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a JOIN EntNetworkElement d ON a.MEDN=d.id
     WHERE a.MENAME!=d.name OR a.MECATEGORY!='NetworkElement' OR a.PRODUCTNAME!=d.productName OR a.MANUFACTURER!=d.manufacturer`).get().n,0);
   const traffic = db.prepare(`SELECT avg(CASE WHEN substr(ts,12,2)='06' THEN ifHCInOctetsSpeed END) busy,
     avg(CASE WHEN substr(ts,12,2)='18' THEN ifHCInOctetsSpeed END) quiet FROM NetworkDeviceInterfaceKPI`).get();
   assert.ok(traffic.busy > traffic.quiet * 1.5, 'Business-hour traffic should exceed night traffic');
   assert.equal(db.prepare('SELECT count(*) n FROM NetworkDeviceKPI WHERE portUsedCount>portCount').get().n, 0);
   const catalog = JSON.parse(readFileSync(process.env.IC_SOURCE_CATALOG));
+  const physicalTables = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name")
+    .all().map(row => row.name);
+  assert.deepEqual(physicalTables, catalog.datasets.map(dataset => dataset.table).sort());
+  assert.deepEqual(physicalTables, Object.keys(first.tables).sort());
   for (const dataset of catalog.datasets) {
     assert.deepEqual(db.prepare(`PRAGMA table_info("${dataset.table}")`).all().map(field => field.name).sort(), dataset.fields.map(field => field.name).sort());
   }
@@ -174,18 +178,18 @@ try {
   assert.ok(db.prepare("SELECT count(*) n FROM NetworkDeviceKPI WHERE substr(ts,15,9)!='00:00.000'").get().n > 0);
   assert.equal(db.prepare('SELECT count(*) n FROM NetworkDeviceKPI WHERE cpuUsage=100').get().n, 0);
   assert.equal(db.prepare('SELECT count(*) n FROM NetworkDeviceKPI WHERE abs(ifUtilizationRate-100.0*operStatusCount/portCount)>0.000001').get().n, 0);
-  const ports = db.prepare('SELECT refParentNE,count(*) n FROM I_EnterpriseNetworkLTP GROUP BY refParentNE').all();
+  const ports = db.prepare('SELECT refParentNE,count(*) n FROM EnterpriseNetworkLTP GROUP BY refParentNE').all();
   assert.equal(ports.length, options.resources);
   assert.ok(ports.every(row=>row.n===4));
   assert.equal(db.prepare(`SELECT count(*) n FROM NetworkDeviceKPI k
-    WHERE k.portCount != (SELECT count(*) FROM I_EnterpriseNetworkLTP p WHERE p.refParentNE=k.resId)`).get().n,0);
+    WHERE k.portCount != (SELECT count(*) FROM EnterpriseNetworkLTP p WHERE p.refParentNE=k.resId)`).get().n,0);
   assert.equal(db.prepare(`SELECT count(*) n FROM NetworkDeviceKPI k WHERE k.ts=(SELECT max(ts) FROM NetworkDeviceKPI)
-    AND k.operStatusCount != (SELECT count(*) FROM I_EnterpriseNetworkLTP p WHERE p.refParentNE=k.resId AND p.operState='active')`).get().n,0);
-  assert.equal(db.prepare(`SELECT count(*) n FROM NetworkDeviceInterfaceKPI k JOIN I_EnterpriseNetworkLTP p ON k.resId=p.id
+    AND k.operStatusCount != (SELECT count(*) FROM EnterpriseNetworkLTP p WHERE p.refParentNE=k.resId AND p.operState='active')`).get().n,0);
+  assert.equal(db.prepare(`SELECT count(*) n FROM NetworkDeviceInterfaceKPI k JOIN EnterpriseNetworkLTP p ON k.resId=p.id
     WHERE k.parentId!=p.refParentNE OR k.interfaceName!=p.name OR k.tenantId!=p.tenantId`).get().n, 0);
-  assert.ok(db.prepare(`SELECT count(*) n FROM I_EntPonElement WHERE classification='ne.category.pon.onu'`).get().n
-    > db.prepare(`SELECT count(*) n FROM I_EntPonElement WHERE classification='ne.category.olt'`).get().n);
-  const assetUnion = ['I_EntNetworkElement','PhysicalServer','HuaweiStorageDevice','I_EntPonElement','FCSwitchDevice','I_EntCollaborationElement']
+  assert.ok(db.prepare(`SELECT count(*) n FROM EntPonElement WHERE classification='ne.category.pon.onu'`).get().n
+    > db.prepare(`SELECT count(*) n FROM EntPonElement WHERE classification='ne.category.olt'`).get().n);
+  const assetUnion = ['EntNetworkElement','PhysicalServer','HuaweiStorageDevice','EntPonElement','FCSwitchDevice','EntCollaborationElement']
     .map(t=>`SELECT id FROM "${t}"`).join(' UNION ALL ');
   assert.equal(db.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a WHERE NOT EXISTS (SELECT 1 FROM (${assetUnion}) d WHERE d.id=a.MEDN)`).get().n, 0);
   assert.equal(db.prepare('SELECT max(ts) t FROM NetworkDeviceKPI').get().t, '2026-10-03T11:00:00.000Z');
@@ -194,8 +198,8 @@ try {
     assert.equal(populations.length, 12);
     assert.ok(populations.every(row => row.n >= 43 && row.n <= 48), `${family}: every resource needs a populated series with bounded missing observations`);
   }
-  assert.ok(db.prepare('SELECT avg(cpuUsage) value FROM NetworkDeviceKPI WHERE resId=? AND ts<?').get('I_EntNetworkElement-0001', '2026-10-02T12:00:00.000Z').value
-    < db.prepare('SELECT avg(cpuUsage) value FROM NetworkDeviceKPI WHERE resId=? AND ts>=?').get('I_EntNetworkElement-0001', '2026-10-02T12:00:00.000Z').value);
+  assert.ok(db.prepare('SELECT avg(cpuUsage) value FROM NetworkDeviceKPI WHERE resId=? AND ts<?').get('EntNetworkElement-0001', '2026-10-02T12:00:00.000Z').value
+    < db.prepare('SELECT avg(cpuUsage) value FROM NetworkDeviceKPI WHERE resId=? AND ts>=?').get('EntNetworkElement-0001', '2026-10-02T12:00:00.000Z').value);
   assert.throws(() => db.exec('INSERT INTO NetworkDeviceKPI SELECT * FROM NetworkDeviceKPI LIMIT 1'), /UNIQUE/);
   assert.throws(() => generate({ ...options, output: join(directory, 'first') }, model), /already exists/);
   assert.throws(() => generate({ ...options, anchor: '2026-02-30T12:00:00Z', output: join(directory, 'bad') }, model), /valid UTC/);
@@ -230,9 +234,9 @@ try {
   const categoryDb = new DatabaseSync(join(directory, 'categories/icloud.sqlite'));
   try {
     for (const [table, column, maximum] of [
-      ['I_EntNetworkElement','manufacturer',4],
-      ['I_EntNetworkElement','version',3], ['I_EntNetworkElement','language',2],
-      ['I_EntNetworkElement','timeZone',1], ['I_EntNetworkElement','location',4],
+      ['EntNetworkElement','manufacturer',4],
+      ['EntNetworkElement','version',3], ['EntNetworkElement','language',2],
+      ['EntNetworkElement','timeZone',1], ['EntNetworkElement','location',4],
       ['PhysicalServer','manufacturer',3], ['PhysicalServer','assetManager',3],
       ['PhysicalServer','biosVersion',3], ['EntTerminalElement','vendor',4],
       ['EntTerminalElement','model',12], ['EntTerminalElement','osName',4],
@@ -245,7 +249,7 @@ try {
     const tenantRows = categoryDb.prepare('SELECT TENANT_ID FROM X_TENANT_VIEW ORDER BY TENANT_ID').all();
     const opticalGroups = categoryDb.prepare(`SELECT p.parentOltResId olt, avg(k.onuHwOpticsRxPower) rx,
       avg(k.onuHwOpticsTxPower) tx, count(DISTINCT k.resId) onus
-      FROM PonDeviceOnuKPI k JOIN I_EntPonElement p ON p.id=k.resId GROUP BY p.parentOltResId`).all();
+      FROM PonDeviceOnuKPI k JOIN EntPonElement p ON p.id=k.resId GROUP BY p.parentOltResId`).all();
     assert.equal(opticalGroups.length,4);
     assert.ok(Math.max(...opticalGroups.map(g=>g.rx))-Math.min(...opticalGroups.map(g=>g.rx))>2,
       'Stable OLT differences survive ONU and time aggregation');
@@ -267,17 +271,17 @@ try {
       'A month of alarms covers dozens of meaningful scenarios');
     const totals = categorized.generation.tenantDistribution.tiers.map(tier => {
       const ids = tenantRows.slice(tier.tenantStart,tier.tenantStart+tier.tenants).map(row=>row.TENANT_ID);
-      return categoryDb.prepare(`SELECT count(*) n FROM I_EntNetworkElement WHERE tenantId IN (${ids.map(()=>'?').join(',')})`).get(...ids).n;
+      return categoryDb.prepare(`SELECT count(*) n FROM EntNetworkElement WHERE tenantId IN (${ids.map(()=>'?').join(',')})`).get(...ids).n;
     });
     assert.deepEqual(totals,[22,11,3]);
     for (const [table,tenantCol,siteCol] of [
-      ['I_EntNetworkElement','tenantId','projectId'], ['PhysicalServer','tenantId','projectId'],
-      ['I_EntPonElement','tenantId','projectId'], ['EntTerminalElement','tenantId','siteId'],
+      ['EntNetworkElement','tenantId','projectId'], ['PhysicalServer','tenantId','projectId'],
+      ['EntPonElement','tenantId','projectId'], ['EntTerminalElement','tenantId','siteId'],
     ]) {
       assert.equal(categoryDb.prepare(`SELECT count(*) n FROM "${table}" d LEFT JOIN X_TENANT_VIEW t ON t.TENANT_ID=d."${tenantCol}" WHERE t.TENANT_ID IS NULL`).get().n,0);
       assert.equal(categoryDb.prepare(`SELECT count(*) n FROM "${table}" d JOIN X_SITE_VIEW s ON s.SITE_ID=d."${siteCol}" WHERE d."${tenantCol}"!=s.TENANT_ID`).get().n,0);
     }
-    for (const [child,parent,key] of [['PhysicalServerFan','PhysicalServer','parentResId'],['I_EnterpriseNetworkLTP','I_EntNetworkElement','refParentNE']]) {
+    for (const [child,parent,key] of [['PhysicalServerFan','PhysicalServer','parentResId'],['EnterpriseNetworkLTP','EntNetworkElement','refParentNE']]) {
       assert.equal(categoryDb.prepare(`SELECT count(*) n FROM "${child}" c JOIN "${parent}" p ON c."${key}"=p.id WHERE c.tenantId!=p.tenantId`).get().n,0);
     }
     assert.equal(categoryDb.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a JOIN PhysicalServer d ON a.MEDN=d.id WHERE a.TENANTID!=d.tenantId`).get().n,0);
@@ -287,20 +291,20 @@ try {
     assert.equal(severityCounts.length,4);
     for (const {level,n} of severityCounts) assert.ok(Math.abs(n/totalAlarms-[0.10,0.18,0.32,0.40][level-1])<0.03,
       `Severity ${level} follows the configured population weight`);
-    assert.equal(categoryDb.prepare('SELECT count(DISTINCT id) n FROM I_EntNetworkElement').get().n,36);
-    assert.equal(categoryDb.prepare('SELECT count(DISTINCT sn) n FROM I_EntNetworkElement').get().n,36);
+    assert.equal(categoryDb.prepare('SELECT count(DISTINCT id) n FROM EntNetworkElement').get().n,36);
+    assert.equal(categoryDb.prepare('SELECT count(DISTINCT sn) n FROM EntNetworkElement').get().n,36);
     assert.equal(categoryDb.prepare("SELECT count(*) n FROM PhysicalServer WHERE productName NOT LIKE manufacturer || '-%'").get().n,0);
     assert.equal(categoryDb.prepare(`SELECT count(*) n FROM T_CURRENT_ALARM a JOIN PhysicalServer d ON a.MEDN=d.id
       WHERE a.MANUFACTURER!=d.manufacturer OR a.PRODUCTNAME!=d.productName`).get().n,0);
-    const vendorCounts = categoryDb.prepare('SELECT count(*) n FROM I_EntNetworkElement GROUP BY manufacturer').all().map(x=>x.n);
+    const vendorCounts = categoryDb.prepare('SELECT count(*) n FROM EntNetworkElement GROUP BY manufacturer').all().map(x=>x.n);
     assert.ok(Math.max(...vendorCounts) > Math.min(...vendorCounts)*2, 'Vendors have a common population and a long tail');
-    assert.ok(categoryDb.prepare("SELECT count(*) n FROM I_EntNetworkElement WHERE commuState='0'").get().n >= 25, 'Most devices are online');
-    assert.ok(categoryDb.prepare('SELECT count(DISTINCT version) n FROM I_EntNetworkElement GROUP BY manufacturer HAVING n>1').all().length>0,
+    assert.ok(categoryDb.prepare("SELECT count(*) n FROM EntNetworkElement WHERE commuState='0'").get().n >= 25, 'Most devices are online');
+    assert.ok(categoryDb.prepare('SELECT count(DISTINCT version) n FROM EntNetworkElement GROUP BY manufacturer HAVING n>1').all().length>0,
       'Manufacturers do not determine firmware version one-to-one');
     assertRelationCoverage(categorized);
   } finally { categoryDb.close(); }
   const { categoryValue } = await import('../data/ic/icloud-category-profiles.mjs');
-  const vendors = seed => Array.from({length:36},(_,i)=>categoryValue('I_EntNetworkElement','manufacturer',i,seed));
+  const vendors = seed => Array.from({length:36},(_,i)=>categoryValue('EntNetworkElement','manufacturer',i,seed));
   assert.deepEqual(vendors(100),vendors(100));
   assert.notDeepEqual(vendors(100),vendors(101),'Changing seed changes category assignments');
   const deletedDay = first.generation.alarmDays[0].day;
@@ -310,7 +314,7 @@ try {
   const missingDay = validate(db, model, dayCounts, { anchor: options.anchor, start: first.window.start });
   assert.deepEqual(missingDay.missingAlarmDays, [deletedDay]);
   db.exec('ROLLBACK TO alarm_coverage; RELEASE alarm_coverage');
-  db.exec("UPDATE NetworkDeviceKPI SET ts='2026-10-01 12:00:00' WHERE rowid=1; UPDATE I_EntNetworkElement SET classification='invalid' WHERE rowid=1");
+  db.exec("UPDATE NetworkDeviceKPI SET ts='2026-10-01 12:00:00' WHERE rowid=1; UPDATE EntNetworkElement SET classification='invalid' WHERE rowid=1");
   const invalid = validate(db, model, first.tables);
   assert.ok(invalid.invalidTimes.length > 0);
   assert.ok(invalid.invalidEnums.length > 0);

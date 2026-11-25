@@ -50,10 +50,10 @@ const profiles = {
   },
 };
 const resourceNames = {
-  X_TENANT_VIEW: '企业租户', X_SITE_VIEW: '园区站点', I_EntNetworkElement: '园区交换机',
+  X_TENANT_VIEW: '企业租户', X_SITE_VIEW: '园区站点', EntNetworkElement: '园区交换机',
   PhysicalServer: '业务服务器', HuaweiStorageDevice: '存储阵列', FCSwitchDevice: '存储交换机',
-  I_EntPonElement: '光接入设备', I_EntCollaborationElement: '会议终端',
-  I_EnterpriseNetworkLTP: '网络接口', I_EnterpriseSlot: '设备板卡', SYS_StorageDisk: '存储磁盘',
+  EntPonElement: '光接入设备', EntCollaborationElement: '会议终端',
+  EnterpriseNetworkLTP: '网络接口', EnterpriseSlot: '设备板卡', SYS_StorageDisk: '存储磁盘',
 };
 
 const defaultWaves = createKpiWaves(20261031);
@@ -186,7 +186,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
       throw new Error(`Unsupported time encoding ${dataset.table}.${column}`);
     }
     const values = enums.get(`${dataset.table}.${column}`);
-    if (dataset.table === 'I_EntNetworkElement' && column === 'classification') return networkDeviceClass(index,seed,dataset.table,enumDefinitions.get(`${dataset.table}.${column}`));
+    if (dataset.table === 'EntNetworkElement' && column === 'classification') return networkDeviceClass(index,seed,dataset.table,enumDefinitions.get(`${dataset.table}.${column}`));
     if (values) return enumCategoryValue(dataset.table, column, index, seed, enumDefinitions.get(`${dataset.table}.${column}`)) ?? values[index % values.length];
     const category = categoryValue(dataset.table, column, index, seed);
     if (category !== undefined) return field.scalar === 'String' ? String(category) : category;
@@ -217,7 +217,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
     if (source.fields.length !== dataset.fields.length || source.fields.some(field => !dataset.fields.some(entry => entry.column === field.name))) {
       throw new Error(`Catalog/model columns differ: ${table}`);
     }
-    const count = table === 'X_TENANT_VIEW' ? tenants.count : table === 'I_EnterpriseNetworkLTP' ? resources * 4 : resources;
+    const count = table === 'X_TENANT_VIEW' ? tenants.count : table === 'EnterpriseNetworkLTP' ? resources * 4 : resources;
     rows.set(table, Array.from({ length: count }, (_, index) => Object.fromEntries(dataset.fields.map(field => [field.column, value(dataset, field, index)]))));
   }
   const identities = new Map();
@@ -228,7 +228,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
     const owner = identities.get(row.resId ?? row.id) ?? row;
     return {id: owner.id ?? row.resId ?? `${table}:${index}`, classification: owner.classification ?? ''};
   };
-  const networkClasses = enumDefinitions.get('I_EntNetworkElement.classification');
+  const networkClasses = enumDefinitions.get('EntNetworkElement.classification');
   // Stable business locations are shared across inventories and their observations.
   // Reassign network witnesses by swapping tenant ownership, preserving tier totals.
   const sites = rows.get('X_SITE_VIEW');
@@ -246,7 +246,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
   const headquarters = location('江州总部', companySites);
   const manufacturing = location('江州智造园区', companySites);
   const manufacturingEast = location('江州智造园区东区', companySites);
-  const network = rows.get('I_EntNetworkElement');
+  const network = rows.get('EntNetworkElement');
   const routerCodes = networkClasses.find(member => member.id === 'Router').wires.map(wire);
   if (network.filter(row => routerCodes.includes(row.classification)).length < 2 && resources > networkClasses.length) {
     network[networkClasses.length].classification = routerCodes[0];
@@ -296,10 +296,10 @@ export function generate(options, model = loadModel(options.contract, options.ca
   });
   const namedSites = {tenant:{id:company.TENANT_ID,name:company.TENANT_NAME},
     sites:[headquarters,manufacturing,manufacturingEast,hightech].map(site => ({id:site.SITE_ID,name:site.SITE_NAME,tenantId:site.TENANT_ID}))};
-  rows.get('I_EntNetworkElement').forEach((row,index) => Object.assign(row,
+  rows.get('EntNetworkElement').forEach((row,index) => Object.assign(row,
     networkDevicePresentation(row.classification,networkClasses,row.manufacturer,index,row.productName),
-    {commuState: availability.rate(availabilityIdentity(row, 'I_EntNetworkElement', index), anchorMs - 1, 1) === 0 ? '1' : '0'}));
-  const pon = rows.get('I_EntPonElement');
+    {commuState: availability.rate(availabilityIdentity(row, 'EntNetworkElement', index), anchorMs - 1, 1) === 0 ? '1' : '0'}));
+  const pon = rows.get('EntPonElement');
   const oltCount = Math.max(1, Math.floor(resources / 8));
   const splitterCount = Math.max(1, Math.floor(resources / 4));
   for (let i = 0; i < pon.length; i++) {
@@ -366,7 +366,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
     rows.get(group.table).forEach((row, index) => {
       const target = group.targets[index % group.targets.length];
       const candidates = rows.get(target.table);
-      const parentIndex = group.table === 'I_EnterpriseNetworkLTP' && group.column === 'refParentNE' ? Math.floor(index / 4) : index;
+      const parentIndex = group.table === 'EnterpriseNetworkLTP' && group.column === 'refParentNE' ? Math.floor(index / 4) : index;
       row[group.column] = candidates[parentIndex % candidates.length][target.column];
     });
   }
@@ -378,7 +378,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
     rows.get(group.table).forEach((row,index) => {
       const target = group.targets[index % group.targets.length];
       const candidates = rows.get(target.table);
-      const parentIndex = group.table === 'I_EnterpriseNetworkLTP' && group.column === 'refParentNE' ? Math.floor(index / 4) : index;
+      const parentIndex = group.table === 'EnterpriseNetworkLTP' && group.column === 'refParentNE' ? Math.floor(index / 4) : index;
       const parent = candidates[parentIndex % candidates.length];
       const tenant = parent.tenantId ?? parent.TENANT_ID;
       if (tenant !== undefined && 'tenantId' in row) row.tenantId = tenant;
@@ -387,8 +387,8 @@ export function generate(options, model = loadModel(options.contract, options.ca
       }
     });
   }
-  rows.get('I_EnterpriseNetworkLTP').forEach((row, index) => {
-    const device = rows.get('I_EntNetworkElement')[Math.floor(index / 4)];
+  rows.get('EnterpriseNetworkLTP').forEach((row, index) => {
+    const device = rows.get('EntNetworkElement')[Math.floor(index / 4)];
     row.refParentNE = device.id;
     row.tenantId = device.tenantId;
     row.name = `GigabitEthernet0/0/${index % 4 + 1}`;
@@ -401,23 +401,23 @@ export function generate(options, model = loadModel(options.contract, options.ca
       samples - 1, interval, () => 0.5, samples, anchorMs - days * 86400000, waves);
     row.operState = index % 4 < active ? 'active' : 'inactive';
   });
-  rows.get('I_EnterpriseOpticalModule').forEach((row, index) => {
-    const port = rows.get('I_EnterpriseNetworkLTP')[index * 4];
+  rows.get('EnterpriseOpticalModule').forEach((row, index) => {
+    const port = rows.get('EnterpriseNetworkLTP')[index * 4];
     row.neResId = port.refParentNE;
     row.ifName = port.name;
     row.tenantId = port.tenantId;
   });
   if(exam)finishExamAssets(rows,exam);
   const ownerTables = {
-    NetworkDeviceInterfaceKPI: 'I_EnterpriseNetworkLTP', NetworkDeviceBoardKPI: 'I_EnterpriseSlot',
+    NetworkDeviceInterfaceKPI: 'EnterpriseNetworkLTP', NetworkDeviceBoardKPI: 'EnterpriseSlot',
     ServerDeviceKPI: 'PhysicalServer', StorageDeviceKPI: 'HuaweiStorageDevice',
     StorageHardDriveKPI: 'SYS_StorageDisk',
   };
   for (const [table, dataset] of tables) if (dataset.fields.some(field => field.column === 'ts')) {
-    const ownerTable = ownerTables[table] ?? (table.startsWith('Pon') ? 'I_EntPonElement' : 'I_EntNetworkElement');
+    const ownerTable = ownerTables[table] ?? (table.startsWith('Pon') ? 'EntPonElement' : 'EntNetworkElement');
     const apSeries = {NetworkAPKPI: 1, NetworkApRadioKPI: 2, NetworkApRadioSsidKPI: 3}[table];
     const ponPorts = table === 'PonDevicePonPortKPI';
-    const owners = apSeries ? rows.get('I_EntNetworkElement').filter(row => ['ne.category.fatap', 'AP'].includes(row.classification))
+    const owners = apSeries ? rows.get('EntNetworkElement').filter(row => ['ne.category.fatap', 'AP'].includes(row.classification))
       : ponPorts ? pon.filter(row => row.classification === 'ne.category.olt') : rows.get(ownerTable);
     if (!owners.length) throw new Error(`No eligible resource owners for ${table}`);
     if (apSeries || ponPorts) {
@@ -456,7 +456,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
         row.resId = owner.id ?? owner.resId ?? owner.diskId ?? id(ownerTable, index);
         if ('tenantId' in row) row.tenantId = owner.tenantId ?? id('X_TENANT_VIEW', tenants.assignments[index % resources]);
         if ('parentId' in row) row.parentId = ['NetworkApRadioKPI', 'NetworkApRadioSsidKPI'].includes(table)
-          ? rows.get('I_EntNetworkElement')[index].id
+          ? rows.get('EntNetworkElement')[index].id
           : owner.refParentNE ?? owner.parentResId ?? owner.id ?? row.resId;
       }
       if ('projectId' in row && table !== 'PonDeviceOnuKPI') row.projectId = owner.projectId ?? row.projectId;
@@ -476,7 +476,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
   const gapEnds = new Map(seriesGaps.map(gap => [gap.resId, Date.parse(gap.endExclusive)]));
   const alarmTemplates = rows.get('T_CURRENT_ALARM');
   const alarmAssets = new Map(Object.keys(alarmFamilies).map(family => [family,
-    rows.get(family).map(owner => alarmProfile(family, owner, rows.get('I_EnterpriseNetworkLTP')))]));
+    rows.get(family).map(owner => alarmProfile(family, owner, rows.get('EnterpriseNetworkLTP')))]));
   const alarms = [];
   const startMs = anchorMs - days * 86400000;
   for (let day = Math.floor(startMs / 86400000) * 86400000, dayIndex = 0; day < anchorMs; day += 86400000, dayIndex++) {
@@ -490,7 +490,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
       const row = { ...alarmTemplates[slot % alarmTemplates.length] };
       const index = (Math.floor(slot / 6) + dayIndex * 5) % resources;
       const eventIndex = alarms.length;
-      const family = ['I_EntNetworkElement', 'PhysicalServer', 'HuaweiStorageDevice', 'I_EntPonElement', 'FCSwitchDevice', 'I_EntCollaborationElement'][slot % 6];
+      const family = ['EntNetworkElement', 'PhysicalServer', 'HuaweiStorageDevice', 'EntPonElement', 'FCSwitchDevice', 'EntCollaborationElement'][slot % 6];
       const owner = rows.get(family)[index];
       const {ports, ...profile} = alarmAssets.get(family)[index];
       Object.assign(row, profile);
@@ -511,7 +511,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
       const occur = Math.max(startMs, Math.min((gapEnds.get(owner.id) ?? anchorMs) - duration - 1,
         Math.floor(begin + (slot + 0.2 + random() * 0.6) / count * Math.max(1, end - begin - duration))));
       const metricTable = {PhysicalServer:'ServerDeviceKPI', HuaweiStorageDevice:'StorageDeviceKPI',
-        FCSwitchDevice:'StorageDeviceKPI', I_EntPonElement:'PonDeviceKPI'}[family] ?? 'NetworkDeviceKPI';
+        FCSwitchDevice:'StorageDeviceKPI', EntPonElement:'PonDeviceKPI'}[family] ?? 'NetworkDeviceKPI';
       const load = waves(metricTable, metricTable === 'StorageDeviceKPI' ? 'cpuusage' : 'cpuUsage', index).at(occur).load;
       row.ALARMNAME = alarmEvent({...profile, ports}, load, availability.rate(availabilityIdentity(owner, family, index), occur, 60000) < 100,
         categoryRandom(seed, 'T_CURRENT_ALARM', eventIndex, 'event'),
@@ -530,7 +530,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
   }
   if(exam)appendExamAlarms(alarms,rows,exam,alarmProfile);
   rows.set('T_CURRENT_ALARM', alarms);
-  rows.get('I_EnterpriseFrame').at(-1).remark = null;
+  rows.get('EnterpriseFrame').at(-1).remark = null;
   mkdirSync(dirname(output), { recursive: true });
   const staging = mkdtempSync(join(dirname(output), '.icloud-data-'));
   const databasePath = join(staging, 'icloud.sqlite');
@@ -629,7 +629,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
     const manifest = {
       format: 'icloud-synthetic-data/v1', revision: model.revision,
       options: { seed, resources, tenants: tenants.count, days, intervalMinutes, anchor: inputAnchor, storageGapHours, alarmsPerResourcePerDay },
-      generation: { revision: 15, examProfile:exam?'ic-exam/v1':null, namedSiteProfile: 'named-business-sites/v1', namedSites, resourceRoleProfile: 'ap-olt-storage-ownership/v1', ponOpticsProfile: 'hierarchical-path-loss/v1', alarmProfile: 'asset-derived-conditional-events/v2', capacityUtilizationProfile: 'conserved-capacity-mb/v2', samplingProfile: 'seeded-missing-jitter/v1', topologyProfile: 'multi-port-multi-onu/v1', availabilityProfile: 'seeded-device-events/v2', devicePresentationProfile: 'canonical-device-class/v1', waveformProfile: 'business-envelope-seeded-jitter/v2', waveformSha256: hash(readFileSync(new URL('./kpi-waveforms.mjs', import.meta.url))), categoryProfile: 'seeded-weighted-categories/v1', tenantDistribution: { tenants: tenants.count, tiers: tenants.tiers }, alarmSeverityWeights: { critical: 1, major: 1.8, minor: 3.2, warning: 4 }, profile: 'daily-business-demo', seriesGaps, alarmDays, metricBusinessUtcOffsetHours: 8 },
+      generation: { revision: 16, examProfile:exam?'ic-exam/v1':null, namedSiteProfile: 'named-business-sites/v1', namedSites, resourceRoleProfile: 'ap-olt-storage-ownership/v1', ponOpticsProfile: 'hierarchical-path-loss/v1', alarmProfile: 'asset-derived-conditional-events/v2', capacityUtilizationProfile: 'conserved-capacity-mb/v2', samplingProfile: 'seeded-missing-jitter/v1', topologyProfile: 'multi-port-multi-onu/v1', availabilityProfile: 'seeded-device-events/v2', devicePresentationProfile: 'canonical-device-class/v1', waveformProfile: 'business-envelope-seeded-jitter/v2', waveformSha256: hash(readFileSync(new URL('./kpi-waveforms.mjs', import.meta.url))), categoryProfile: 'seeded-weighted-categories/v1', tenantDistribution: { tenants: tenants.count, tiers: tenants.tiers }, alarmSeverityWeights: { critical: 1, major: 1.8, minor: 3.2, warning: 4 }, profile: 'daily-business-demo', seriesGaps, alarmDays, metricBusinessUtcOffsetHours: 8 },
       window: { start: iso(startMs), endExclusive: anchor, samplesPerSeries: samples },
       catalogSha256: hash(catalogBytes), modelSha256: hash(JSON.stringify(model)),
       database: { file: 'icloud.sqlite', sha256: hashFile(databasePath) },
@@ -684,8 +684,8 @@ export function validate(db, model, counts, { anchor, start } = {}) {
     invalidMetricScenarios: [], invalidAlarmTimes: [], invalidAlarmProfiles: [], missingAlarmDays: [], invalidResourceRoles: [] };
   for (const [table, parentTable, key, predicate] of [
     ...['NetworkAPKPI', 'NetworkApRadioKPI', 'NetworkApRadioSsidKPI'].map(table =>
-      [table, 'I_EntNetworkElement', table === 'NetworkAPKPI' ? 'resId' : 'parentId', "p.classification IN ('ne.category.fatap','AP')"]),
-    ['PonDevicePonPortKPI', 'I_EntPonElement', 'parentId', "p.classification='ne.category.olt'"],
+      [table, 'EntNetworkElement', table === 'NetworkAPKPI' ? 'resId' : 'parentId', "p.classification IN ('ne.category.fatap','AP')"]),
+    ['PonDevicePonPortKPI', 'EntPonElement', 'parentId', "p.classification='ne.category.olt'"],
   ]) {
     const invalid = db.prepare(`SELECT count(*) n FROM ${quote(table)} k LEFT JOIN ${quote(parentTable)} p ON k.${quote(key)}=p.id
       WHERE p.id IS NULL OR NOT (${predicate}) OR k.tenantId IS NOT p.tenantId OR k.projectId IS NOT p.projectId`).get().n;
@@ -699,7 +699,7 @@ export function validate(db, model, counts, { anchor, start } = {}) {
       OR (classification='ThirdPartyStorage' AND manufacturer='华为')`).get().n;
     if (invalid) checks.invalidResourceRoles.push({table, invalid});
   }
-  const ports = db.prepare('SELECT * FROM I_EnterpriseNetworkLTP').all();
+  const ports = db.prepare('SELECT * FROM EnterpriseNetworkLTP').all();
   const assets = new Map(Object.keys(alarmFamilies).flatMap(family =>
     db.prepare(`SELECT * FROM ${quote(family)}`).all().map(owner => [owner.id, alarmProfile(family, owner, ports)])));
   for (const alarm of db.prepare('SELECT * FROM T_CURRENT_ALARM').all()) {
@@ -734,8 +734,8 @@ export function validate(db, model, counts, { anchor, start } = {}) {
     .all(...(anchor ? [Date.parse(anchor)] : []), ...(start ? [Date.parse(start)] : []));
   checks.invalidAlarmTimes.push(...invalidAlarms.map(row => row.CSN));
   const cpuSources = {
-    I_EntNetworkElement: 'NetworkDeviceKPI', PhysicalServer: 'ServerDeviceKPI',
-    HuaweiStorageDevice: 'StorageDeviceKPI', FCSwitchDevice: 'StorageDeviceKPI', I_EntPonElement: 'PonDeviceKPI',
+    EntNetworkElement: 'NetworkDeviceKPI', PhysicalServer: 'ServerDeviceKPI',
+    HuaweiStorageDevice: 'StorageDeviceKPI', FCSwitchDevice: 'StorageDeviceKPI', EntPonElement: 'PonDeviceKPI',
   };
   for (const [resource, metric] of Object.entries(cpuSources)) {
     const missing = db.prepare(`SELECT r.id FROM ${quote(resource)} r WHERE NOT EXISTS (SELECT 1 FROM ${quote(metric)} k WHERE k.resId=r.id)`).all();
@@ -745,8 +745,8 @@ export function validate(db, model, counts, { anchor, start } = {}) {
         AND k.ts < strftime('%Y-%m-%dT00:00:00.000Z', a.OCCURUTC / 1000, 'unixepoch', '+1 day'))`).all();
     checks.alarmsWithoutCpuSamples.push(...missingAlarms.map(row => ({ resource, ...row, metric })));
   }
-  checks.unsupportedAlarmCpuResources = db.prepare('SELECT a.CSN, a.MEDN FROM T_CURRENT_ALARM a JOIN I_EntCollaborationElement r ON a.MEDN=r.id').all()
-    .map(row => ({ resource: 'I_EntCollaborationElement', ...row, reason: 'No declared CPU sample source' }));
+  checks.unsupportedAlarmCpuResources = db.prepare('SELECT a.CSN, a.MEDN FROM T_CURRENT_ALARM a JOIN EntCollaborationElement r ON a.MEDN=r.id').all()
+    .map(row => ({ resource: 'EntCollaborationElement', ...row, reason: 'No declared CPU sample source' }));
   for (const [table, expected] of Object.entries(counts)) {
     const actual = db.prepare(`SELECT count(*) AS n FROM ${quote(table)}`).get().n;
     if (actual !== expected) throw new Error(`Row count mismatch: ${table}`);
