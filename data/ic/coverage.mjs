@@ -10,7 +10,6 @@ export function checkExamCoverage(db, directory, {anchor} = {}) {
   if (!Number.isFinite(end)) throw Error('Exam coverage requires an explicit anchor');
   const iso = n => new Date(n).toISOString();
   const day = 86400000;
-  const at = date => Date.parse(date);
   const sqlTime = n => `'${iso(n)}'`;
   const network = 'EntNetworkElement';
   const sw = "d.classification IN ('LSW','ne.category.switch')";
@@ -20,10 +19,8 @@ export function checkExamCoverage(db, directory, {anchor} = {}) {
   const flash = "d.subClassName='EnterpriseStorage'";
   const window = (start, stop, alias='k') => `${alias}.ts >= ${sqlTime(start)} AND ${alias}.ts < ${sqlTime(stop)}`;
   const recent = (days, alias='k') => window(end-days*day,end,alias);
-  const fixed = window(at('2026-10-13T17:25Z'),at('2026-10-14T17:25Z'));
-  const hour = window(at('2026-10-14T16:25Z'),at('2026-10-14T17:25Z'));
-  const date14 = window(at('2026-10-14T00:00Z'),at('2026-10-14T17:25Z'));
-  const alarmWindow = `a.OCCURUTC >= ${at('2026-10-13T17:33Z')} AND a.OCCURUTC < ${at('2026-10-14T17:33Z')}`;
+  const lastDay = recent(1);
+  const alarmWindow = `a.OCCURUTC >= ${end-day} AND a.OCCURUTC < ${end}`;
   const catalog = new Map();
   function add(ids, sql, minimum=1, note) {
     for (const id of ids.split(' ')) {
@@ -33,10 +30,10 @@ export function checkExamCoverage(db, directory, {anchor} = {}) {
   }
   function extra(id,sql,minimum=1){catalog.get(id).checks.push({sql,minimum});}
   const resources = (table,where='1') => `SELECT d.* FROM ${table} d WHERE ${where}`;
-  const metric = (table,owner,where='1',time=fixed) => `SELECT DISTINCT d.id FROM ${table} k JOIN ${owner} d ON k.resId=d.id WHERE ${where} AND ${time}`;
+  const metric = (table,owner,where='1',time=lastDay) => `SELECT DISTINCT d.id FROM ${table} k JOIN ${owner} d ON k.resId=d.id WHERE ${where} AND ${time}`;
   const alarm = (owner,where='1',time='1') => `SELECT a.CSN FROM T_CURRENT_ALARM a JOIN ${owner} d ON a.MEDN=d.id WHERE ${where} AND ${time}`;
   const component = (table,owner,key,where='1') => `SELECT c.* FROM ${table} c JOIN ${owner} d ON c.parentResId=d.${key} WHERE ${where}`;
-  const ports = (where='1',time=fixed) => `SELECT DISTINCT k.resId FROM NetworkDeviceInterfaceKPI k JOIN ${network} d ON k.parentId=d.id WHERE ${where} AND ${time}`;
+  const ports = (where='1',time=lastDay) => `SELECT DISTINCT k.resId FROM NetworkDeviceInterfaceKPI k JOIN ${network} d ON k.parentId=d.id WHERE ${where} AND ${time}`;
   add('A1-001',resources('HuaweiStorageDevice',`${flash} AND d.version LIKE '%1.1.0.SPH8%'`),2);
   extra('A1-001',resources('HuaweiStorageDevice',`${flash} AND d.version NOT LIKE '%1.1.0.SPH8%'`));
   add('A1-002',resources('FCSwitchDevice',"d.ipAddress!=''"));
@@ -74,22 +71,22 @@ export function checkExamCoverage(db, directory, {anchor} = {}) {
   add(cs(4),`SELECT DISTINCT s.SITE_ID FROM X_SITE_VIEW s JOIN PhysicalServer d ON s.SITE_ID=d.refParentSubnet`);
   const hqAll = `SELECT id FROM ${network} d WHERE ${hq} UNION ALL SELECT id FROM PhysicalServer d WHERE ${hq} UNION ALL SELECT id FROM HuaweiStorageDevice d WHERE ${hq} UNION ALL SELECT id FROM EntPonElement d WHERE ${hq}`;
   add(cs(6,18,60,102),hqAll,10);
-  add(cs(7),metric('NetworkDeviceKPI',network,`${hq} AND d.ipAddress LIKE '10.136.%'`,hour));
-  add(cs(8),alarm(network,'a.CLEARED=0 AND a.SEVERITY=2',`a.OCCURUTC<=${at('2026-10-14T17:33Z')}`));
-  add(cs(9),metric('NetworkDeviceKPI',network,hq,hour),2);
+  add(cs(7),metric('NetworkDeviceKPI',network,`${hq} AND d.ipAddress LIKE '10.136.%'`,lastDay));
+  add(cs(8),alarm(network,'a.CLEARED=0 AND a.SEVERITY=2'));
+  add(cs(9),metric('NetworkDeviceKPI',network,hq,lastDay),2);
   add(cs(10),resources(network,`${sw} AND d.manufacturer!='华为'`));
   add(cs(11),component('PhysicalServerPSU','PhysicalServer','oriResId','c.healthStatus!=0'),1,'电源无离线通信状态：应澄清，或明确改用健康状态口径');
-  add(cs(12),alarm(network,"a.ALARMNAME='Route Change'",`a.OCCURUTC>=${at('2026-10-13T00:00Z')} AND a.OCCURUTC<${at('2026-10-15T00:00Z')}`));
-  add(cs(13),metric('NetworkDeviceKPI',network,`${hq} AND k.cpuUsage>70 AND k.memUsage>70`,date14));
-  add(cs(14),metric('NetworkDeviceKPI',network,'1',window(at('2026-10-14T14:00Z'),at('2026-10-14T16:00Z'))),3);
+  add(cs(12),alarm(network,"a.ALARMNAME='Route Change'",alarmWindow));
+  add(cs(13),metric('NetworkDeviceKPI',network,`${hq} AND k.cpuUsage>70 AND k.memUsage>70`,lastDay));
+  add(cs(14),metric('NetworkDeviceKPI',network,'1',lastDay),3);
   add(cs(15),alarm(network,"d.name='Core-SW-01' AND a.SEVERITY=1"));
-  add(cs(16),`SELECT DISTINCT MEDN FROM T_CURRENT_ALARM WHERE OCCURUTC>=${at('2026-10-07T00:00Z')} AND OCCURUTC<${at('2026-10-15T00:00Z')}`,10);
+  add(cs(16),`SELECT DISTINCT MEDN FROM T_CURRENT_ALARM WHERE OCCURUTC>=${end-7*day} AND OCCURUTC<${end}`,10);
   add(cs(17,56),resources(network,company),5);
   add(cs(19),resources(network,`${company} AND d.commuState='0'`),3);
   add(cs(20),resources(network,"d.mac LIKE '%9E-CB-73%'"));
   add(cs(21),`SELECT c.* FROM EnterpriseSlot c JOIN ${network} d ON c.refParentNE=d.id WHERE d.mac LIKE '%9E-CB-73%'`);
   add(cs(22,23,50),`SELECT l.* FROM EnterprisePhysicalLink l JOIN ${network} d ON l.aNeResId=d.id OR l.zNeResId=d.id WHERE d.name='Core-SW-01'`,2);
-  add(cs(24,25),metric('NetworkDeviceKPI',network,'1',hour),5);
+  add(cs(24,25),metric('NetworkDeviceKPI',network,'1',lastDay),5);
   add(cs(26),resources('PhysicalServer',`${company} AND d.connectStatus=3`));
   add(cs(27,28,29),ports(`${hq} AND k.ifInBandRate<50`));
   add(cs(30),alarm(network,`${company} AND a.SEVERITY=2`));
@@ -98,10 +95,10 @@ export function checkExamCoverage(db, directory, {anchor} = {}) {
   add(cs(33),metric('ServerDeviceKPI','PhysicalServer',"d.manufacturer='华为' AND k.memUsage>70",recent(3)));
   add(cs(34),component('PhysicalServerDisk','PhysicalServer','oriResId',hq));
   add(cs(35,36),component('SYS_Fan','HuaweiStorageDevice','id',hq));
-  add(cs(37),ports(hq,window(at('2026-10-13T00:00Z'),at('2026-10-15T00:00Z'))),4);
+  add(cs(37),ports(hq,lastDay),4);
   add(cs(38,39),ports(hq),4);
-  add(cs(40),ports(`${hq} AND k.ifInBandRate<50`,date14));
-  add(cs(41),ports(`${hq} AND k.ifInBandRate>50`,date14));
+  add(cs(40),ports(`${hq} AND k.ifInBandRate<50`,lastDay));
+  add(cs(41),ports(`${hq} AND k.ifInBandRate>50`,lastDay));
   add(cs(44,45),alarm(network,`${hq} AND a.ALARMNAME='Route Change'`));
   add(cs(46),alarm(network,company,alarmWindow));
   add(cs(47),alarm(network,hq,alarmWindow));
@@ -127,7 +124,7 @@ export function checkExamCoverage(db, directory, {anchor} = {}) {
   add(cs(72),resources('HuaweiStorageDevice',company));
   add(cs(73),resources('EntTerminalElement',company));
   add(cs(74),metric('NetworkDeviceKPI',network,hq));
-  add(cs(75),`SELECT DISTINCT c.id FROM NetworkDeviceBoardKPI k JOIN EnterpriseSlot c ON c.id=k.resId JOIN ${network} d ON c.refParentNE=d.id WHERE ${hq} AND ${fixed}`);
+  add(cs(75),`SELECT DISTINCT c.id FROM NetworkDeviceBoardKPI k JOIN EnterpriseSlot c ON c.id=k.resId JOIN ${network} d ON c.refParentNE=d.id WHERE ${hq} AND ${lastDay}`);
   add(cs(76),component('SYS_Controller','HuaweiStorageDevice','id',hq));
   add(cs(77),component('PhysicalServerFan','PhysicalServer','oriResId'));
   add(cs(78),metric('ServerDeviceKPI','PhysicalServer',`${hq} AND d.healthStatus=0`),2);

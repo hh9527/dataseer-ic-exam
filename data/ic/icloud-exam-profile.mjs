@@ -99,11 +99,7 @@ export function appendExamAlarms(alarms,rows,s,alarmProfile){
   alarms.push(row);
  };
  for(let i=0;i<25;i++)add('EntNetworkElement',s.access,'SNMP 采集超时',s.anchorMs-(i+1)*3600000,{acked:0,severity:i%4+1});
- const october=Date.parse('2026-10-13T12:30:00Z');
- if(october>=s.startMs&&october<s.anchorMs){
-  add('EntNetworkElement',s.core,'Route Change',october,{severity:1});
-  add('EntNetworkElement',s.core,'对象删除',october+3600000,{severity:3,eventtype:13});
- }
+ add('EntNetworkElement',s.core,'Route Change',s.anchorMs-12*3600000,{severity:1});
  add('EntNetworkElement',s.core,'对象删除',s.anchorMs-day,{severity:3,eventtype:13});
  add('PhysicalServer',s.servers[0],'OS用户SSH免密指纹文件内容格式错误告警',s.anchorMs-2*day);
  add('PhysicalServer',s.servers[1],'服务器管理接口不可达',s.anchorMs-day,{severity:2});
@@ -126,7 +122,7 @@ export function examMetric(s,table,column,ownerId,time,value){
 export function examExtraTimes(table,anchorMs){
  if(!/KPI$/.test(table))return [];
  const times=[];
- for(const d of ['2026-10-13','2026-10-14'])for(const h of [0,8,14,15,16,17])times.push(Date.parse(`${d}T${String(h).padStart(2,'0')}:30:00Z`));
+ for(const minutes of [15,45,90])times.push(anchorMs-minutes*60000);
  if(table==='ServerDeviceKPI'){
   const date=new Date(anchorMs),year=date.getUTCFullYear()-1,month=date.getUTCMonth();
   for(let d=1;d<=new Date(Date.UTC(year,month+1,0)).getUTCDate();d++)times.push(Date.UTC(year,month,d,12));

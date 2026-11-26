@@ -17,7 +17,7 @@ try {
     ['B3-004',"UPDATE EntNetworkElement SET sn='different' WHERE sn='121516516546'"],
     ['B3-002',"DELETE FROM ServerDeviceKPI WHERE ts<'2026-01-01'"],
     ['C1-052',"UPDATE EnterprisePhysicalLink SET linkStatus=0 WHERE (aNeName='Core-SW-01' AND zNeName='Acc-SW-01') OR (zNeName='Core-SW-01' AND aNeName='Acc-SW-01')"],
-    ['C1-013',"UPDATE NetworkDeviceKPI SET memUsage=30 WHERE ts>='2026-10-14T00:00:00.000Z' AND ts<'2026-10-14T17:25:00.000Z'"],
+    ['C1-013',`UPDATE NetworkDeviceKPI SET memUsage=30 WHERE ts>='${new Date(Date.parse(anchor)-86400000).toISOString()}' AND ts<'${new Date(anchor).toISOString()}'`],
     ['A2-004',"UPDATE T_CURRENT_ALARM SET CLEARED=1 WHERE SEVERITY=3 AND MEDN IN (SELECT id FROM HuaweiStorageDevice)"],
   ]) {
     db.exec('SAVEPOINT coverage_counterexample');
