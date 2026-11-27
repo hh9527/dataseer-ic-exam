@@ -35,6 +35,10 @@ submit port *args:
     TESTER_STATE_DIR="${TESTER_STATE_DIR:-$DEPLOY_ROOT/$1/tester}" node tools/exam.mjs submit "${@:2}"
 
 [positional-arguments]
+approve port *args:
+    TESTER_STATE_DIR="${TESTER_STATE_DIR:-$DEPLOY_ROOT/$1/tester}" node tools/exam.mjs approve "${@:2}"
+
+[positional-arguments]
 wait port *args:
     TESTER_STATE_DIR="${TESTER_STATE_DIR:-$DEPLOY_ROOT/$1/tester}" node tools/exam.mjs wait "${@:2}"
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 考官工具：服务维护单个会话的状态机，ask 发问、submit 澄清，越界立即报错。
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
@@ -24,6 +24,7 @@ const help = `exam — 考官工具
   exam ask "<文本>" | --from <文件>     发任意文本
   exam ask ... --dry-run               只打印将要发出的内容，不发送
   exam submit --select "1;2" | "文本"   澄清；多个问题用分号按顺序分段
+  exam approve allow | reject            回应审批请求
   exam wait [--timeout 秒]             继续等本轮结果
 `;
 
@@ -76,6 +77,31 @@ function findQuestions(node) {
   return undefined;
 }
 
+// 审批是「带固定动作的阻塞请求」：客户端监听 approval/request，返回审批结论字符串。
+// 结论词表由宿主定义：allowed-once / rejected（另有 cancelled、unavailable 用于异常路径）。
+function findApproval(node) {
+  const queue = [node];
+  while (queue.length) {
+    const item = queue.shift();
+    if (!item || typeof item !== 'object') continue;
+    if (item.toolName) {
+      return {
+        toolName: String(item.toolName),
+        callId: item.callId ?? null,
+        reason: item.reason ?? item.displayReason ?? '',
+      };
+    }
+    for (const value of Object.values(item)) if (value && typeof value === 'object') queue.push(value);
+  }
+  return undefined;
+}
+
+// 交给调用方看的形状：只暴露「是什么、要我决定什么」，不带投递用的内部字段。
+function publicItem(item) {
+  if (item.kind === 'question') return { kind: 'question', questions: item.questions };
+  return { kind: 'approval', toolName: item.toolName, reason: item.reason };
+}
+
 // ── 服务 ───────────────────────────────────────────────────────────────────────
 
 async function serve(flags, state) {
@@ -86,10 +112,14 @@ async function serve(flags, state) {
   // 状态机：none → idle → running → pending → running → idle
   let sessionId;
   let phase = 'none';
-  let pending;
+  // 所有阻塞型交互（澄清、审批）统一进这个队列，由考官逐条决定，工具不预设立场。
+  const pendingInputs = [];
   let seqAtTurnStart = 0;
   let lastReply = '';
   let generation = 0;
+  const dumpApproval = (payload) => {
+    try { appendFileSync(join(STATE_DIR, 'approval-dump.jsonl'), `${JSON.stringify(payload)}\n`); } catch {}
+  };
 
   // 事件流必须能自愈：DSH 重启会关掉旧的 WebSocket，不重连就再也收不到澄清请求。
   let ws;
@@ -107,12 +137,26 @@ async function serve(flags, state) {
     if (value.event === 'user-questions/request') {
       const questions = findQuestions(value.request);
       if (!questions) return;
-      pending = { eventId: value.eventId, clientId: ws.__clientId, questions };
+      if (pendingInputs.some((i) => i.eventId === value.eventId)) return;
+      pendingInputs.push({ kind: 'question', eventId: value.eventId, clientId: ws.__clientId, questions });
       phase = 'pending';
       return;
     }
+    if (value.event === 'approval/request') {
+      const view = findApproval(value.request ?? value);
+      dumpApproval({ at: new Date().toISOString(), event: value.event, view: view ?? null, raw: value.request ?? null });
+      if (!view) return;
+      if (pendingInputs.some((i) => i.eventId === value.eventId)) return;
+      pendingInputs.push({ kind: 'approval', eventId: value.eventId, clientId: ws.__clientId, toolName: view.toolName, reason: view.reason });
+      return;
+    }
     if (value.event === 'turn/end') {
-      if (!pending) phase = 'idle';
+      // 轮次已结束，任何还挂着的待办都已过期（被别处应答或随轮次作废）。
+      if (pendingInputs.length) {
+        dumpApproval({ at: new Date().toISOString(), stale: pendingInputs.map(publicItem), reason: 'turn/end' });
+        pendingInputs.length = 0;
+      }
+      phase = 'idle';
     }
   };
   const openEvents = () => {
@@ -144,9 +188,14 @@ async function serve(flags, state) {
     const myGeneration = generation;
     for (;;) {
       if (generation !== myGeneration) return { status: 'aborted' };
-      if (phase === 'pending') return { status: 'question', questions: pending.questions };
+      if (pendingInputs.length) return { status: 'pending', items: pendingInputs.map(publicItem) };
       const view = await sessionView();
       if (!view.running && view.seq > seqAtTurnStart) {
+        // 会话已经停下，但待办还非空：这些事件已被宿主丢弃，不能当作还在等。
+        if (pendingInputs.length) {
+          dumpApproval({ at: new Date().toISOString(), stale: pendingInputs.map(publicItem), reason: 'turn-settled' });
+          pendingInputs.length = 0;
+        }
         phase = 'idle';
         return { status: 'done', reply: view.reply };
       }
@@ -156,7 +205,9 @@ async function serve(flags, state) {
   };
 
   const answerPending = async (text, select) => {
-    const { eventId, clientId, questions } = pending;
+    const item = pendingInputs.find((i) => i.kind === 'question');
+    if (!item) throw new Error('当前没有待澄清的问题');
+    const { eventId, clientId, questions } = item;
     const labelsOf = (q) => (q.options ?? []).map((o) => o.label ?? String(o));
     const pick = (q, choice) => {
       const labels = labelsOf(q);
@@ -186,16 +237,58 @@ async function serve(flags, state) {
       headers: { 'content-type': 'application/json', cookie: state.cookie ?? '' },
       body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: '$events/result', payload: { args: { clientId, eventId, outcome: { kind: 'result', value: { answers } } } } }),
     });
-    if (!res.ok) throw new Error(`回答投递失败 HTTP ${res.status}`);
-    pending = undefined;
-    phase = 'running';
+    const raw = await res.text().catch(() => '');
+    let body;
+    try { body = JSON.parse(raw); } catch { body = undefined; }
+    if (!res.ok || body?.result?.ok !== true) {
+      throw new Error(`回答未被接受（HTTP ${res.status}）：${(body?.result?.error?.message ?? raw).slice(0, 200)}`);
+    }
+    const index = pendingInputs.indexOf(item);
+    if (index < 0) throw new Error('待处理请求已失效');
+    pendingInputs.splice(index, 1);
+    phase = pendingInputs.some((i) => i.kind === 'question') ? 'pending' : 'running';
   };
+
+  // 审批结论就是宿主 answerer 的返回值：把字符串作为事件结果回投。
+  async function answerApproval(decision) {
+    if (decision !== 'allow' && decision !== 'reject') throw new Error('approve 需要 allow 或 reject');
+    const item = pendingInputs.find((i) => i.kind === 'approval');
+    if (!item) throw new Error('当前没有待审批的请求');
+    const { eventId, clientId } = item;
+    const value = decision === 'allow' ? 'allowed-once' : 'rejected';
+    const res = await fetch(`${state.base}/api/$events/result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: state.cookie ?? '' },
+      body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: '$events/result', payload: { args: { clientId, eventId, outcome: { kind: 'result', value } } } }),
+    });
+    const text = await res.text().catch(() => '');
+    dumpApproval({ at: new Date().toISOString(), decision, value, status: res.status, body: text.slice(0, 300) });
+    // 检查宿主 RPC 的响应状态。
+    let body;
+    try { body = JSON.parse(text); } catch { body = undefined; }
+    if (!res.ok || body?.result?.ok !== true) {
+      throw new Error(`审批未被接受（HTTP ${res.status}）：${(body?.result?.error?.message ?? text).slice(0, 200)}`);
+    }
+    const index = pendingInputs.indexOf(item);
+    if (index < 0) throw new Error('待处理请求已失效');
+    pendingInputs.splice(index, 1);
+  }
 
   const server = createServer((req, res) => {
     const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     const read = (cb) => { let raw = ''; req.on('data', (c) => { raw += c; }); req.on('end', () => cb(JSON.parse(raw || '{}'))); };
 
-    if (req.method === 'GET' && req.url === '/state') return send(200, { sessionId: sessionId ?? null, cwd, phase, pending: pending?.questions ?? null });
+    if (req.method === 'GET' && req.url === '/state') return send(200, { sessionId: sessionId ?? null, cwd, phase, pending: pendingInputs.map(publicItem) });
+
+    if (req.method === 'POST' && req.url === '/approve') {
+      return read(async ({ decision, timeoutSeconds }) => {
+        try {
+          if (decision !== 'allow' && decision !== 'reject') return send(400, { error: 'approve 需要 allow 或 reject' });
+          await answerApproval(decision);
+          send(200, await waitSettled(Math.max(5, Number(timeoutSeconds ?? 180)) * 1000));
+        } catch (error) { send(409, { error: String(error?.message ?? error) }); }
+      });
+    }
 
     if (req.method === 'POST' && req.url === '/new-session') {
       return read(async ({ clear }) => {
@@ -208,7 +301,7 @@ async function serve(flags, state) {
           const created = await rpc(state, 'session/create', { cwd, agentPreset: 'dari' });
           sessionId = created.sessionId;          // 放弃旧会话
           generation += 1;                        // 旧一轮的等待一并作废
-          pending = undefined; phase = 'idle'; seqAtTurnStart = 0; lastReply = '';
+          pendingInputs.length = 0; phase = 'idle'; seqAtTurnStart = 0; lastReply = '';
           saveState({ ...state, cwd, sessionId });
           send(200, { sessionId });
         } catch (error) { send(409, { error: String(error?.message ?? error) }); }
@@ -223,7 +316,12 @@ async function serve(flags, state) {
             const view = await sessionView();
             if (!view.running) phase = 'idle';
           }
-          if (phase !== 'idle') throw new Error(`当前不能发问（${phase === 'pending' ? '等待澄清' : '考生作答中'}）`);
+          if (phase !== 'idle') {
+            const blocked = pendingInputs.length
+              ? pendingInputs.map((i) => (i.kind === 'approval' ? `等待审批 ${i.toolName}` : '等待澄清')).join(' / ')
+              : '考生作答中';
+            throw new Error(`当前不能发问（${blocked}）`);
+          }
           if (!text?.trim()) throw new Error('ask 需要文本');
           const view = await sessionView();
           seqAtTurnStart = view.seq;
@@ -374,11 +472,19 @@ function composeAsk(flags) {
 }
 
 function report(body, elapsed) {
-  if (body.status === 'question') {
-    console.log('⟐ 等待你澄清');
-    for (const q of body.questions) {
-      console.log(`  [${q.id}] ${q.header ?? ''} ${q.question ?? ''}`);
-      for (const o of q.options ?? []) console.log(`    - ${o.label ?? o}`);
+  if (body.status === 'pending') {
+    for (const item of body.items) {
+      if (item.kind === 'question') {
+        console.log('⟐ 等待你澄清');
+        for (const q of item.questions) {
+          console.log(`  [${q.id}] ${q.header ?? ''} ${q.question ?? ''}`);
+          for (const o of q.options ?? []) console.log(`    - ${o.label ?? o}`);
+        }
+      } else {
+        console.log('⟐ 等待审批');
+        console.log(`  [${item.toolName}] ${item.reason ?? ''}`);
+        console.log('  用 approve allow / approve reject 决定');
+      }
     }
     return;
   }
@@ -425,6 +531,10 @@ try {
     const text = pos.slice(1).join(' ');
     if (!text && flags.select === undefined) throw new Error('submit 需要文本或 --select');
     await call('/submit', { text, select: flags.select, timeoutSeconds: Number(flags.timeout ?? 180) }, flags);
+  } else if (command === 'approve') {
+    const decision = pos[1] === 'reject' ? 'reject' : pos[1] === 'allow' ? 'allow' : undefined;
+    if (!decision) throw new Error('approve 需要 allow 或 reject');
+    await call('/approve', { decision, timeoutSeconds: Number(flags.timeout ?? 180) }, flags);
   } else if (command === 'wait') {
     await call('/wait', { timeoutSeconds: Number(flags.timeout ?? 180) }, flags);
   } else console.log(help);

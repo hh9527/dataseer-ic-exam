@@ -24,7 +24,7 @@ just ask 10924 --question T1-016 --step 2 --dry-run
 just run-tester 10924 --deploy-root /path/to/product/.deploy
 ```
 
-`run-tester` 使用指定部署的 token 和工作区建立考官服务。考官状态保存在 `<deploy-root>/<port>/tester`；数据目录由调用方控制，不写入考卷文件。所有端口须显式指定。集成在 dataseer-ic 时，伞仓的 `just run-tester`、`just ask`、`just submit` 等命令统一转调本仓 justfile，并通过 `--set deploy_root <绝对路径>` 指定部署根目录。`DEPLOY_ROOT` 设置独立使用时的默认部署目录，`TESTER_STATE_DIR` 可覆盖客户端状态目录。
+`run-tester` 使用指定部署的 token 和工作区建立考官服务。考官状态保存在 `<deploy-root>/<port>/tester`；数据目录由调用方控制，不写入考卷文件。所有端口须显式指定。集成在 dataseer-ic 时，伞仓的 `just run-tester`、`just ask`、`just submit`、`just approve` 等命令统一转调本仓 justfile，并通过 `--set deploy_root <绝对路径>` 指定部署根目录。`DEPLOY_ROOT` 设置独立使用时的默认部署目录，`TESTER_STATE_DIR` 可覆盖客户端状态目录。
 
 独立调用 `tools/exam.mjs` 时，通过 `TESTER_STATE_DIR` 指向同一个考官状态目录；`just ask` 等入口也接受此变量。工具使用脚本所在仓库的题库，调用目录不会改变题库来源。
 
