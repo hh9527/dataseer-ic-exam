@@ -312,7 +312,7 @@ async function serve(flags, state) {
       return read(async ({ text, timeoutSeconds }) => {
         try {
           if (!sessionId) throw new Error('还没有会话；先 new-session');
-          if (phase === 'running' && !pending) {
+          if (phase === 'running' && !pendingInputs.length) {
             const view = await sessionView();
             if (!view.running) phase = 'idle';
           }
@@ -335,7 +335,10 @@ async function serve(flags, state) {
     if (req.method === 'POST' && req.url === '/submit') {
       return read(async ({ text, select, timeoutSeconds }) => {
         try {
-          if (phase !== 'pending') throw new Error(`当前没有待澄清的问题（${phase === 'running' ? '考生作答中' : '等待发问'}）`);
+          if (!pendingInputs.some((i) => i.kind === 'question')) {
+            const blocked = pendingInputs.some((i) => i.kind === 'approval') ? '等待审批' : phase === 'running' ? '考生作答中' : '等待发问';
+            throw new Error(`当前没有待澄清的问题（${blocked}）`);
+          }
           await answerPending(text ?? '', select);
           send(200, await waitSettled(Math.max(5, Number(timeoutSeconds ?? 180)) * 1000));
         } catch (error) { send(409, { error: String(error?.message ?? error) }); }
