@@ -1,3 +1,4 @@
+import { alarmFields } from './icloud-alarm-profiles.mjs';
 // Business witnesses for the IC examination corpus. Background populations and
 // waveforms remain seeded; this profile supplies named assets and edge cases.
 const day=86400000;
@@ -86,21 +87,20 @@ export function finishExamAssets(rows,s){
  link(links[0],s.core,s.access,2);link(links[1],s.core,s.ipSwitch,0);link(links[2],s.controller,s.core,2);
 }
 export function appendExamAlarms(alarms,rows,s,alarmProfile){
- const add=(family,owner,name,time,{severity=2,acked=1,cleared=0,eventtype}={})=>{
+ const add=(family,owner,name,time,{severity=2,acked=1,cleared=0}={})=>{
   const template=alarms.find(a=>a.MECATEGORY===({EntNetworkElement:'NetworkElement',PhysicalServer:'PhysicalServer',HuaweiStorageDevice:'HuaweiStorageDevice',EntPonElement:'EntPonElement'}[family]));
   if(!template)throw Error('Missing alarm scenario family '+family);
   const row={...template,...alarmProfile(family,owner,rows.get('EnterpriseNetworkLTP'))};delete row.ports;
-  Object.assign(row,{CSN:alarms.length+1,ALARMNAME:name,SEVERITY:severity,ACKED:acked,CLEARED:cleared,MOI:'',
+  Object.assign(row,{CSN:alarms.length+1,...alarmFields(name),SEVERITY:severity,ACKED:acked,CLEARED:cleared,MOI:'',
    OCCURUTC:time,OCCURTIME:time,LATESTOCCURUTC:time,LATESTOCCURTIME:time,ARRIVEUTC:time+1000,
    ACKUTC:acked?time+1000:0,CLEARUTC:cleared?time+2000:0,CLEARTIME:cleared?time+2000:0,ENDUTC:cleared?time+2000:0,COMMENTUTC:acked?time+1000:0});
   row.TENANT=rows.get('X_TENANT_VIEW').find(t=>t.TENANT_ID===owner.tenantId)?.TENANT_NAME ?? '';
   row.LOCATION=owner.projectId ?? owner.name;
-  if(eventtype!==undefined)row.EVENTTYPE=eventtype;
   alarms.push(row);
  };
  for(let i=0;i<25;i++)add('EntNetworkElement',s.access,'SNMP 采集超时',s.anchorMs-(i+1)*3600000,{acked:0,severity:i%4+1});
  add('EntNetworkElement',s.core,'Route Change',s.anchorMs-12*3600000,{severity:1});
- add('EntNetworkElement',s.core,'对象删除',s.anchorMs-day,{severity:3,eventtype:13});
+ add('EntNetworkElement',s.core,'对象删除',s.anchorMs-day,{severity:3});
  add('PhysicalServer',s.servers[0],'OS用户SSH免密指纹文件内容格式错误告警',s.anchorMs-2*day);
  add('PhysicalServer',s.servers[1],'服务器管理接口不可达',s.anchorMs-day,{severity:2});
  add('HuaweiStorageDevice',s.flash[0],'存储缓存使用率过高',s.anchorMs-day,{severity:3});

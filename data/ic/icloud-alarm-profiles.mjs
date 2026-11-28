@@ -72,3 +72,26 @@ export function alarmEvent(profile, load, offline, draw, variantDraw = 0) {
   let remaining = draw * events.reduce((sum, [, weight]) => sum + weight, 0);
   return events.find(([, weight]) => (remaining -= weight) < 0)?.[0] ?? events.at(-1)[0];
 }
+
+export const routingChangeEventType = 16;
+
+const eventTypes = new Map([
+  ['Route Change', routingChangeEventType],
+  ['对象删除', 13],
+  ['设备温度过高', 5],
+  ['设备短时离线', 15],
+  ['CPU 利用率过高', 18],
+  ['内存使用率过高', 18],
+  ['链路质量下降', 4],
+  ['端口错误率升高', 4],
+  ['SNMP 采集超时', 1],
+  ['服务器管理接口不可达', 1],
+  ['OLT 管理通道异常', 1],
+  ['存储缓存使用率过高', 18],
+  ['OS用户SSH免密指纹文件内容格式错误告警', 9],
+]);
+
+export function alarmFields(name) {
+  // The remaining synthetic device scenarios use the broad Equipment Alarm category.
+  return { ALARMNAME: name, EVENTTYPE: eventTypes.get(name) ?? 2 };
+}

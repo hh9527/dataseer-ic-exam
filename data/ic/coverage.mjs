@@ -1,3 +1,4 @@
+import { routingChangeEventType } from './icloud-alarm-profiles.mjs';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -76,7 +77,7 @@ export function checkExamCoverage(db, directory, {anchor} = {}) {
   add(cs(9),metric('NetworkDeviceKPI',network,hq,lastDay),2);
   add(cs(10),resources(network,`${sw} AND d.manufacturer!='华为'`));
   add(cs(11),component('PhysicalServerPSU','PhysicalServer','oriResId','c.healthStatus!=0'),1,'电源无离线通信状态：应澄清，或明确改用健康状态口径');
-  add(cs(12),alarm(network,"a.ALARMNAME='Route Change'",alarmWindow));
+  add(cs(12),alarm(network,`a.ALARMNAME='Route Change' AND a.EVENTTYPE=${routingChangeEventType}`,alarmWindow));
   add(cs(13),metric('NetworkDeviceKPI',network,`${hq} AND k.cpuUsage>70 AND k.memUsage>70`,lastDay));
   add(cs(14),metric('NetworkDeviceKPI',network,'1',lastDay),3);
   add(cs(15),alarm(network,"d.name='Core-SW-01' AND a.SEVERITY=1"));

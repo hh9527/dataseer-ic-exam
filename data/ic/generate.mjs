@@ -3,7 +3,7 @@ import {checkExamCoverage} from './coverage.mjs';
 import { createAvailability } from './icloud-availability.mjs';
 import { createKpiWaves } from './kpi-waveforms.mjs';
 import { createPonOptics } from './pon-optics.mjs';
-import { alarmFamilies, alarmProfile, alarmEvent } from './icloud-alarm-profiles.mjs';
+import { alarmFamilies, alarmProfile, alarmEvent, alarmFields } from './icloud-alarm-profiles.mjs';
 import { categoryRandom, categoryValue, enumCategoryValue, tenantLayout, networkDevicePresentation, networkDeviceClass } from './icloud-category-profiles.mjs';
 import { normalizeUtcMillis } from './utc-milliseconds.mjs';
 import { createHash } from 'node:crypto';
@@ -513,9 +513,9 @@ export function generate(options, model = loadModel(options.contract, options.ca
       const metricTable = {PhysicalServer:'ServerDeviceKPI', HuaweiStorageDevice:'StorageDeviceKPI',
         FCSwitchDevice:'StorageDeviceKPI', EntPonElement:'PonDeviceKPI'}[family] ?? 'NetworkDeviceKPI';
       const load = waves(metricTable, metricTable === 'StorageDeviceKPI' ? 'cpuusage' : 'cpuUsage', index).at(occur).load;
-      row.ALARMNAME = alarmEvent({...profile, ports}, load, availability.rate(availabilityIdentity(owner, family, index), occur, 60000) < 100,
+      Object.assign(row, alarmFields(alarmEvent({...profile, ports}, load, availability.rate(availabilityIdentity(owner, family, index), occur, 60000) < 100,
         categoryRandom(seed, 'T_CURRENT_ALARM', eventIndex, 'event'),
-        categoryRandom(seed, 'T_CURRENT_ALARM', eventIndex, 'event-variant'));
+        categoryRandom(seed, 'T_CURRENT_ALARM', eventIndex, 'event-variant'))));
       const port = ports[Math.floor(categoryRandom(seed, 'T_CURRENT_ALARM', eventIndex, 'port') * ports.length)];
       row.MOI = ['链路质量下降', '端口错误率升高'].includes(row.ALARMNAME) ? `Port ID=${port.portIndex}` : '';
       for (const column of ['OCCURUTC', 'OCCURTIME', 'LATESTOCCURUTC', 'LATESTOCCURTIME']) row[column] = occur;
@@ -629,7 +629,7 @@ export function generate(options, model = loadModel(options.contract, options.ca
     const manifest = {
       format: 'icloud-synthetic-data/v1', revision: model.revision,
       options: { seed, resources, tenants: tenants.count, days, intervalMinutes, anchor: inputAnchor, storageGapHours, alarmsPerResourcePerDay },
-      generation: { revision: 16, examProfile:exam?'ic-exam/v1':null, namedSiteProfile: 'named-business-sites/v1', namedSites, resourceRoleProfile: 'ap-olt-storage-ownership/v1', ponOpticsProfile: 'hierarchical-path-loss/v1', alarmProfile: 'asset-derived-conditional-events/v2', capacityUtilizationProfile: 'conserved-capacity-mb/v2', samplingProfile: 'seeded-missing-jitter/v1', topologyProfile: 'multi-port-multi-onu/v1', availabilityProfile: 'seeded-device-events/v2', devicePresentationProfile: 'canonical-device-class/v1', waveformProfile: 'business-envelope-seeded-jitter/v2', waveformSha256: hash(readFileSync(new URL('./kpi-waveforms.mjs', import.meta.url))), categoryProfile: 'seeded-weighted-categories/v1', tenantDistribution: { tenants: tenants.count, tiers: tenants.tiers }, alarmSeverityWeights: { critical: 1, major: 1.8, minor: 3.2, warning: 4 }, profile: 'daily-business-demo', seriesGaps, alarmDays, metricBusinessUtcOffsetHours: 8 },
+      generation: { revision: 16, examProfile:exam?'ic-exam/v1':null, namedSiteProfile: 'named-business-sites/v1', namedSites, resourceRoleProfile: 'ap-olt-storage-ownership/v1', ponOpticsProfile: 'hierarchical-path-loss/v1', alarmProfile: 'asset-derived-conditional-events/v3', capacityUtilizationProfile: 'conserved-capacity-mb/v2', samplingProfile: 'seeded-missing-jitter/v1', topologyProfile: 'multi-port-multi-onu/v1', availabilityProfile: 'seeded-device-events/v2', devicePresentationProfile: 'canonical-device-class/v1', waveformProfile: 'business-envelope-seeded-jitter/v2', waveformSha256: hash(readFileSync(new URL('./kpi-waveforms.mjs', import.meta.url))), categoryProfile: 'seeded-weighted-categories/v1', tenantDistribution: { tenants: tenants.count, tiers: tenants.tiers }, alarmSeverityWeights: { critical: 1, major: 1.8, minor: 3.2, warning: 4 }, profile: 'daily-business-demo', seriesGaps, alarmDays, metricBusinessUtcOffsetHours: 8 },
       window: { start: iso(startMs), endExclusive: anchor, samplesPerSeries: samples },
       catalogSha256: hash(catalogBytes), modelSha256: hash(JSON.stringify(model)),
       database: { file: 'icloud.sqlite', sha256: hashFile(databasePath) },
@@ -704,7 +704,7 @@ export function validate(db, model, counts, { anchor, start } = {}) {
     db.prepare(`SELECT * FROM ${quote(family)}`).all().map(owner => [owner.id, alarmProfile(family, owner, ports)])));
   for (const alarm of db.prepare('SELECT * FROM T_CURRENT_ALARM').all()) {
     const expected = assets.get(alarm.MEDN);
-    if (!expected || Object.entries(expected).some(([key, value]) => key !== 'ports' && value !== undefined && alarm[key] !== value)
+    if (alarm.EVENTTYPE !== alarmFields(alarm.ALARMNAME).EVENTTYPE || !expected || Object.entries(expected).some(([key, value]) => key !== 'ports' && value !== undefined && alarm[key] !== value)
       || (alarm.MOI && !expected.ports.some(port => alarm.MOI === `Port ID=${port.portIndex}`))
       || (['链路质量下降', '端口错误率升高'].includes(alarm.ALARMNAME) && !alarm.MOI)) checks.invalidAlarmProfiles.push(alarm.CSN);
   }
