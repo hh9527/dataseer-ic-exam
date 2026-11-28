@@ -11,7 +11,6 @@ const STATE_DIR = process.env.TESTER_STATE_DIR ?? join(process.cwd(), '.deploy',
 const STATE_FILE = join(STATE_DIR, 'state.json');
 const PORT_FILE = join(STATE_DIR, 'exam.port');
 const PID_FILE = join(STATE_DIR, 'exam.pid');
-const PARAM = { 'session/list': '_request' };
 
 const help = `exam — 考官工具
 
@@ -46,12 +45,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const loadState = () => (existsSync(STATE_FILE) ? JSON.parse(readFileSync(STATE_FILE, 'utf8')) : {});
 const saveState = (s) => { mkdirSync(STATE_DIR, { recursive: true }); writeFileSync(STATE_FILE, `${JSON.stringify(s, null, 2)}\n`); };
 
-async function rpc(state, method, body) {
-  const param = PARAM[method] ?? 'request';
+async function rpc(state, method, body, signal) {
   const res = await fetch(`${state.base}/api/${method}`, {
     method: 'POST',
+    signal,
     headers: { 'content-type': 'application/json', cookie: state.cookie ?? '' },
-    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args: { [param]: body } } }),
+    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args: { request: body } } }),
   });
   if (res.status === 401) throw new Error('401 未认证');
   const json = JSON.parse(await res.text());
@@ -110,12 +109,18 @@ async function serve(flags, state) {
   if (!cwd) throw new Error('需要 --cwd');
 
   // 状态机：none → idle → running → pending → running → idle
-  let sessionId;
-  let phase = 'none';
+  let sessionId = state.sessionId;
+  let phase = sessionId ? 'running' : 'none';
   // 所有阻塞型交互（澄清、审批）统一进这个队列，由考官逐条决定，工具不预设立场。
   const pendingInputs = [];
-  let seqAtTurnStart = 0;
+  const offered = new Map();
+  let seqAtTurnStart = state.seqAtTurnStart ?? -1;
   let lastReply = '';
+  let lastReconcile = -Infinity;
+  let reconciliation;
+  let sendingPrompt = false;
+  let recovering = false;
+  let inputRevision = 0;
   let generation = 0;
   const dumpApproval = (payload) => {
     try { appendFileSync(join(STATE_DIR, 'approval-dump.jsonl'), `${JSON.stringify(payload)}\n`); } catch {}
@@ -124,40 +129,39 @@ async function serve(flags, state) {
   // 事件流必须能自愈：DSH 重启会关掉旧的 WebSocket，不重连就再也收不到澄清请求。
   let ws;
   let stopping = false;
-  const onFrame = (m) => {
-    let frame; try { frame = JSON.parse(String(m.data)); } catch { return; }
+  const onFrame = (socket, message) => {
+    if (socket !== ws) return;
+    let frame;
+    try { frame = JSON.parse(String(message.data)); } catch { return; }
     const value = frame?.value;
     if (!value) return;
-    if (value.type === 'ready') { ws.__clientId = value.clientId; return; }
-    if (value.type !== 'waterfall') return;
-    if (!sessionId) return;
-    // agentId 即会话号：别的会话的提问一律无视。
-    const eventSession = value.agentId ?? value.request?.agentId;
-    if (eventSession !== undefined && String(eventSession) !== sessionId) return;
+    if (value.type === 'ready') {
+      socket.clientId = value.clientId;
+      return;
+    }
+    if (value.type === 'cancel') {
+      const index = pendingInputs.findIndex(item => item.eventId === value.eventId);
+      if (index >= 0) pendingInputs.splice(index, 1);
+      if (phase === 'pending' && !pendingInputs.length) phase = 'running';
+      return;
+    }
+    if (value.type !== 'waterfall' || phase === 'idle' || !sessionId || !socket.clientId ||
+        String(value.agentId ?? value.request?.agentId) !== sessionId) return;
+    let details;
     if (value.event === 'user-questions/request') {
       const questions = findQuestions(value.request);
-      if (!questions) return;
-      if (pendingInputs.some((i) => i.eventId === value.eventId)) return;
-      pendingInputs.push({ kind: 'question', eventId: value.eventId, clientId: ws.__clientId, questions });
-      phase = 'pending';
-      return;
+      if (questions) details = { kind: 'question', questions };
+    } else if (value.event === 'approval/request') {
+      const view = findApproval(value.request);
+      if (view) details = { kind: 'approval', ...view };
     }
-    if (value.event === 'approval/request') {
-      const view = findApproval(value.request ?? value);
-      dumpApproval({ at: new Date().toISOString(), event: value.event, view: view ?? null, raw: value.request ?? null });
-      if (!view) return;
-      if (pendingInputs.some((i) => i.eventId === value.eventId)) return;
-      pendingInputs.push({ kind: 'approval', eventId: value.eventId, clientId: ws.__clientId, toolName: view.toolName, reason: view.reason });
-      return;
-    }
-    if (value.event === 'turn/end') {
-      // 轮次已结束，任何还挂着的待办都已过期（被别处应答或随轮次作废）。
-      if (pendingInputs.length) {
-        dumpApproval({ at: new Date().toISOString(), stale: pendingInputs.map(publicItem), reason: 'turn/end' });
-        pendingInputs.length = 0;
-      }
-      phase = 'idle';
-    }
+    if (!details) return;
+    const existing = pendingInputs.find(item => item.eventId === value.eventId);
+    if (existing) Object.assign(existing, details, { clientId: socket.clientId });
+    else pendingInputs.push({ ...details, eventId: value.eventId, clientId: socket.clientId });
+    inputRevision += 1;
+    recovering = false;
+    phase = 'pending';
   };
   const openEvents = () => {
     if (stopping) return;
@@ -166,47 +170,76 @@ async function serve(flags, state) {
     const socket = new WebSocket(`${fresh.base.replace(/^http/, 'ws')}/api/remote.mux`, { headers: { cookie: fresh.cookie ?? '' } });
     ws = socket;
     socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'open', streamId: randomUUID(), endpoint: '$events', payload: { args: {} } })));
-    socket.addEventListener('message', onFrame);
+    socket.addEventListener('message', message => onFrame(socket, message));
     socket.addEventListener('error', () => { try { socket.close(); } catch {} });
-    socket.addEventListener('close', () => { if (!stopping) setTimeout(openEvents, 1000); });
+    socket.addEventListener('close', () => {
+      if (socket !== ws) return;
+      ws = undefined;
+      pendingInputs.length = 0;
+      if (phase === 'pending') {
+        phase = 'running';
+        recovering = true;
+      }
+      if (!stopping) setTimeout(openEvents, 1000);
+    });
   };
   openEvents();
-  process.on('SIGTERM', () => { stopping = true; try { ws?.close(); } catch {} });
 
-  const sessionView = async () => {
-    const items = (await rpc(state, 'session/list', {})).items ?? [];
-    const item = items.find((i) => i.sessionId === sessionId);
-    if (!item) return { running: false, seq: 0, reply: '' };
-    const page = await rpc(state, 'session/page', { address: { kind: 'session', sessionId }, throughSeq: item.projections.asOfSeq, maxMessages: 400 });
-    const replies = (page.records ?? []).map((r) => r.event).filter((ev) => ev?.type === 'assistant/message').map(textOf).filter(Boolean);
-    return { running: Boolean(item.running), seq: item.projections.asOfSeq, reply: replies.at(-1) ?? '' };
-  };
-
-  // 结束判定以会话真实状态为准：turn/end 不在事件流里，不能等它。
-  const waitSettled = async (timeoutMs) => {
-    const deadline = Date.now() + timeoutMs;
-    const myGeneration = generation;
-    for (;;) {
-      if (generation !== myGeneration) return { status: 'aborted' };
-      if (pendingInputs.length) return { status: 'pending', items: pendingInputs.map(publicItem) };
-      const view = await sessionView();
-      if (!view.running && view.seq > seqAtTurnStart) {
-        // 会话已经停下，但待办还非空：这些事件已被宿主丢弃，不能当作还在等。
-        if (pendingInputs.length) {
-          dumpApproval({ at: new Date().toISOString(), stale: pendingInputs.map(publicItem), reason: 'turn-settled' });
-          pendingInputs.length = 0;
-        }
+  async function reconcile(timeoutMs) {
+    if (reconciliation) return reconciliation;
+    const currentGeneration = generation;
+    const observedInputRevision = inputRevision;
+    lastReconcile = performance.now();
+    reconciliation = (async () => {
+      const result = await rpc(loadState(), 'session/wait', {
+        sessionId, afterSeq: seqAtTurnStart, timeoutMs, maxMessages: 20,
+      }, AbortSignal.timeout(timeoutMs + 3000));
+      if (currentGeneration !== generation) return;
+      if (result.reason === 'idle' && observedInputRevision === inputRevision && !result.state.queue?.length &&
+          result.state.cursor > seqAtTurnStart) {
+        pendingInputs.length = 0;
+        recovering = false;
         phase = 'idle';
-        return { status: 'done', reply: view.reply };
+        lastReply = result.output.records.map(record => textOf(record.event)).find(Boolean) ?? '';
+      } else if (result.reason === 'input-required' && !pendingInputs.length) {
+        recovering = true;
+        ws?.close();
       }
-      if (Date.now() > deadline) return { status: 'waiting' };
-      await sleep(1000);
+    })();
+    try { await reconciliation; } finally { reconciliation = undefined; }
+  }
+
+  async function waitSettled(timeoutMs) {
+    const deadline = performance.now() + timeoutMs;
+    const currentGeneration = generation;
+    for (;;) {
+      if (currentGeneration !== generation) return { status: 'aborted' };
+      if (pendingInputs.length) {
+        for (const item of pendingInputs) {
+          if (!pendingInputs.some(candidate => candidate.eventId === offered.get(item.kind))) offered.set(item.kind, item.eventId);
+        }
+        const items = pendingInputs.filter(item => offered.get(item.kind) === item.eventId);
+        return { status: 'pending', items: items.map(publicItem) };
+      }
+      if (phase === 'idle') return { status: 'done', reply: lastReply };
+      if (!sessionId) throw Error('还没有会话，先 new-session');
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) {
+        if (recovering) throw Error('宿主仍在等待介入，待办详情尚未恢复，可用 wait 重试');
+        return { status: 'waiting' };
+      }
+      if (!sendingPrompt && performance.now() - lastReconcile >= 10_000) {
+        await reconcile(Math.ceil(Math.min(1000, remaining)));
+      } else {
+        await sleep(Math.min(250, remaining));
+      }
     }
-  };
+  }
 
   const answerPending = async (text, select) => {
-    const item = pendingInputs.find((i) => i.kind === 'question');
+    const item = pendingInputs.find(i => i.kind === 'question' && i.eventId === offered.get('question'));
     if (!item) throw new Error('当前没有待澄清的问题');
+    const currentGeneration = generation;
     const { eventId, clientId, questions } = item;
     const labelsOf = (q) => (q.options ?? []).map((o) => o.label ?? String(o));
     const pick = (q, choice) => {
@@ -233,8 +266,9 @@ async function serve(flags, state) {
       return { id: q.id, selected: [], custom: part ?? '' };
     });
     const res = await fetch(`${state.base}/api/$events/result`, {
+      signal: AbortSignal.timeout(5000),
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: state.cookie ?? '' },
+      headers: { 'content-type': 'application/json', cookie: loadState().cookie ?? '' },
       body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: '$events/result', payload: { args: { clientId, eventId, outcome: { kind: 'result', value: { answers } } } } }),
     });
     const raw = await res.text().catch(() => '');
@@ -244,21 +278,25 @@ async function serve(flags, state) {
       throw new Error(`回答未被接受（HTTP ${res.status}）：${(body?.result?.error?.message ?? raw).slice(0, 200)}`);
     }
     const index = pendingInputs.indexOf(item);
-    if (index < 0) throw new Error('待处理请求已失效');
-    pendingInputs.splice(index, 1);
+    if (currentGeneration !== generation) throw Error('会话已更换');
+    if (index >= 0) pendingInputs.splice(index, 1);
+    offered.delete(item.kind);
+    lastReconcile = -Infinity;
     phase = pendingInputs.some((i) => i.kind === 'question') ? 'pending' : 'running';
   };
 
   // 审批结论就是宿主 answerer 的返回值：把字符串作为事件结果回投。
   async function answerApproval(decision) {
     if (decision !== 'allow' && decision !== 'reject') throw new Error('approve 需要 allow 或 reject');
-    const item = pendingInputs.find((i) => i.kind === 'approval');
+    const item = pendingInputs.find(i => i.kind === 'approval' && i.eventId === offered.get('approval'));
     if (!item) throw new Error('当前没有待审批的请求');
+    const currentGeneration = generation;
     const { eventId, clientId } = item;
     const value = decision === 'allow' ? 'allowed-once' : 'rejected';
     const res = await fetch(`${state.base}/api/$events/result`, {
+      signal: AbortSignal.timeout(5000),
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: state.cookie ?? '' },
+      headers: { 'content-type': 'application/json', cookie: loadState().cookie ?? '' },
       body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: '$events/result', payload: { args: { clientId, eventId, outcome: { kind: 'result', value } } } }),
     });
     const text = await res.text().catch(() => '');
@@ -270,8 +308,10 @@ async function serve(flags, state) {
       throw new Error(`审批未被接受（HTTP ${res.status}）：${(body?.result?.error?.message ?? text).slice(0, 200)}`);
     }
     const index = pendingInputs.indexOf(item);
-    if (index < 0) throw new Error('待处理请求已失效');
-    pendingInputs.splice(index, 1);
+    if (currentGeneration !== generation) throw Error('会话已更换');
+    if (index >= 0) pendingInputs.splice(index, 1);
+    offered.delete(item.kind);
+    lastReconcile = -Infinity;
   }
 
   const server = createServer((req, res) => {
@@ -298,11 +338,13 @@ async function serve(flags, state) {
               if (name.endsWith('.dari')) rmSync(join(cwd, name), { force: true });
             }
           }
-          const created = await rpc(state, 'session/create', { cwd, agentPreset: 'dari' });
+          const created = await rpc(loadState(), 'session/create', { cwd, agentPreset: 'dari' }, AbortSignal.timeout(5000));
           sessionId = created.sessionId;          // 放弃旧会话
           generation += 1;                        // 旧一轮的等待一并作废
-          pendingInputs.length = 0; phase = 'idle'; seqAtTurnStart = 0; lastReply = '';
-          saveState({ ...state, cwd, sessionId });
+          offered.clear();
+          pendingInputs.length = 0; phase = 'idle'; seqAtTurnStart = -1; lastReply = '';
+          recovering = false; lastReconcile = -Infinity;
+          saveState({ ...loadState(), cwd, sessionId, seqAtTurnStart });
           send(200, { sessionId });
         } catch (error) { send(409, { error: String(error?.message ?? error) }); }
       });
@@ -312,21 +354,36 @@ async function serve(flags, state) {
       return read(async ({ text, timeoutSeconds }) => {
         try {
           if (!sessionId) throw new Error('还没有会话；先 new-session');
-          if (phase === 'running' && !pendingInputs.length) {
-            const view = await sessionView();
-            if (!view.running) phase = 'idle';
-          }
-          if (phase !== 'idle') {
+          const previousGeneration = generation;
+          if (phase === 'running' && !pendingInputs.length && !sendingPrompt) await reconcile(1000);
+          if (previousGeneration !== generation) throw Error('会话或轮次已更换');
+          if (phase !== 'idle' || sendingPrompt || pendingInputs.length) {
             const blocked = pendingInputs.length
-              ? pendingInputs.map((i) => (i.kind === 'approval' ? `等待审批 ${i.toolName}` : '等待澄清')).join(' / ')
+              ? pendingInputs.map(i => i.kind === 'approval' ? `等待审批 ${i.toolName}` : '等待澄清').join(' / ')
               : '考生作答中';
             throw new Error(`当前不能发问（${blocked}）`);
           }
           if (!text?.trim()) throw new Error('ask 需要文本');
-          const view = await sessionView();
-          seqAtTurnStart = view.seq;
-          phase = 'running';
-          await rpc(state, 'session/prompt', { requestId: randomUUID(), sessionId, mode: 'queue', content: [{ type: 'text', text }], clientTimeZone: 'Asia/Shanghai' });
+          const currentGeneration = ++generation;
+          const target = sessionId;
+          sendingPrompt = true;
+          try {
+            const view = await rpc(loadState(), 'session/state', { sessionId: target }, AbortSignal.timeout(5000));
+            if (currentGeneration !== generation) throw Error('会话已更换');
+            if (view.running || view.queue?.length || view.pendingInput.length) {
+              phase = 'running';
+              throw Error('当前会话仍有活动，请用 wait 查看');
+            }
+            seqAtTurnStart = view.cursor;
+            phase = 'running';
+            lastReply = '';
+            lastReconcile = -Infinity;
+            saveState({ ...loadState(), cwd, sessionId, seqAtTurnStart });
+            await rpc(loadState(), 'session/prompt', { requestId: randomUUID(), sessionId: target, mode: 'queue', content: [{ type: 'text', text }], clientTimeZone: 'Asia/Shanghai' }, AbortSignal.timeout(5000));
+            if (currentGeneration !== generation) throw Error('会话已更换');
+          } finally {
+            sendingPrompt = false;
+          }
           send(200, await waitSettled(Math.max(5, Number(timeoutSeconds ?? 180)) * 1000));
         } catch (error) { send(409, { error: String(error?.message ?? error) }); }
       });
@@ -353,6 +410,13 @@ async function serve(flags, state) {
     }
 
     send(404, { error: 'not found' });
+  });
+
+  process.once('SIGTERM', () => {
+    stopping = true;
+    ws?.close();
+    server.close();
+    server.closeAllConnections();
   });
 
   server.listen(Number(flags.port ?? 0), '127.0.0.1', () => {
